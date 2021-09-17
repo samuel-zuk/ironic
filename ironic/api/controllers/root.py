@@ -17,11 +17,13 @@
 import pecan
 
 from ironic.api.controllers import v1
+from ironic.api.controllers import redfish
 from ironic.api.controllers import version
 from ironic.api import method
 
 
 V1 = v1.Controller()
+redfish = redfish.Controller()
 
 
 def root():
@@ -49,17 +51,19 @@ class RootController(object):
         It redirects the request to the default version of the ironic API
         if the version number is not specified in the url.
         """
+        if primary_key and primary_key == 'redfish':
+            return redfish, remainder
+        else:
+            # support paths which are missing the first version element
+            if primary_key and primary_key != version.ID_VERSION1:
+                remainder = [primary_key] + list(remainder)
 
-        # support paths which are missing the first version element
-        if primary_key and primary_key != version.ID_VERSION1:
-            remainder = [primary_key] + list(remainder)
+            # remove any trailing /
+            if remainder and not remainder[-1]:
+                remainder = remainder[:-1]
 
-        # remove any trailing /
-        if remainder and not remainder[-1]:
-            remainder = remainder[:-1]
+            # but ensure /v1 goes to /v1/
+            if not remainder:
+                remainder = ['']
 
-        # but ensure /v1 goes to /v1/
-        if not remainder:
-            remainder = ['']
-
-        return V1, remainder
+            return V1, remainder
