@@ -42,6 +42,7 @@ from ironic.conf import neutron
 from ironic.conf import nova
 from ironic.conf import pxe
 from ironic.conf import redfish
+from ironic.conf import redfish_proxy
 from ironic.conf import service_catalog
 from ironic.conf import snmp
 from ironic.conf import swift
@@ -76,6 +77,7 @@ neutron.register_opts(CONF)
 nova.register_opts(CONF)
 pxe.register_opts(CONF)
 redfish.register_opts(CONF)
+redfish_proxy.register_opts(CONF)
 service_catalog.register_opts(CONF)
 snmp.register_opts(CONF)
 swift.register_opts(CONF)

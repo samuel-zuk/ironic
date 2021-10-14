@@ -14,7 +14,6 @@ from oslo_concurrency import processutils
 from oslo_service import service
 from oslo_service import wsgi
 
-from ironic.api import app
 from ironic.common import exception
 from ironic.common.i18n import _
 from ironic.conf import CONF
@@ -26,17 +25,19 @@ _MAX_DEFAULT_WORKERS = 4
 class WSGIService(service.ServiceBase):
     """Provides ability to launch ironic API from wsgi app."""
 
-    def __init__(self, name, use_ssl=False):
+    def __init__(self, name, app, conf_section):
         """Initialize, but do not start the WSGI server.
 
         :param name: The name of the WSGI server given to the loader.
-        :param use_ssl: Wraps the socket in an SSL context if True.
+        :param app: The app to be ran inside the WSGI server.
+        :param conf_section: The name of the configuration section containing
+            the options that specify how this server should be run.
         :returns: None
         """
         self.name = name
-        self.app = app.VersionSelectorApplication()
+        self.app = app
         self.workers = (
-            CONF.api.api_workers
+            CONF[conf_section].api_workers
             # NOTE(dtantsur): each worker takes a substantial amount of memory,
             # so we don't want to end up with dozens of them.
             or min(processutils.get_worker_count(), _MAX_DEFAULT_WORKERS)
@@ -47,9 +48,9 @@ class WSGIService(service.ServiceBase):
                   "must be greater than 0.") % self.workers)
 
         self.server = wsgi.Server(CONF, name, self.app,
-                                  host=CONF.api.host_ip,
-                                  port=CONF.api.port,
-                                  use_ssl=use_ssl)
+                                  host=CONF[conf_section].host_ip,
+                                  port=CONF[conf_section].port,
+                                  use_ssl=CONF[conf_section].enable_ssl_api)
 
     def start(self):
         """Start serving this service using loaded configuration.
