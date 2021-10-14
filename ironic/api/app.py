@@ -69,6 +69,10 @@ def setup_app(pecan_config=None, extra_hooks=None):
     if not pecan_config:
         pecan_config = get_pecan_config()
 
+    if CONF.redfish_proxy.enabled:
+        pecan_config.app.acl_public_routes.append('/redfish')
+        pecan_config.app.acl_public_routes.append('/redfish/v1')
+
     pecan.configuration.set_config(dict(pecan_config), overwrite=True)
 
     app = pecan.make_app(

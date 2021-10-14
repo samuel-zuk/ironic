@@ -32,9 +32,6 @@ app = {
         # IPA ramdisk methods
         '/v1/lookup',
         '/v1/heartbeat/[a-z0-9\\-]+',
-        # Redfish power control intermediary
-        '/redfish',
-        '/redfish/v1'
     ],
 }
 
