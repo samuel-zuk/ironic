@@ -10,6 +10,7 @@ except ImportError:
     gmr = None
 
 from ironic.common import profiler
+from ironic.common import wsgi_service
 from ironic.common import service as ironic_service
 from ironic.redfish_proxy import app
 
@@ -17,10 +18,12 @@ CONF = cfg.CONF
 
 LOG = log.getLogger(__name__)
 
-
 def main():
-    """
     ironic_service.prepare_service(sys.argv)
+
+    if not CONF.redfish_proxy.enabled:
+        raise RuntimeError('The Ironic Redfish proxy service is currently '
+                           'disabled and must be enabled in ironic.conf.')
 
     if gmr is not None:
         gmr_opts.set_defaults(CONF)
@@ -32,11 +35,11 @@ def main():
     profiler.setup('ironic_redfish_proxy', CONF.host)
 
     launcher = ironic_service.process_launcher()
-
-    print("test")
-    """
-    for x in "healthcheck", "audit":
-        print(CONF[x].enabled)
+    server = wsgi_service.WSGIService('ironic_redfish_proxy',
+                                      app.RedfishProxyApplication(),
+                                      'redfish_proxy')
+    launcher.launch_service(server, workers=server.workers)
+    launcher.wait()
 
 
 if __name__ == '__main__':

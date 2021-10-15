@@ -23,7 +23,7 @@ _MAX_DEFAULT_WORKERS = 4
 
 
 class WSGIService(service.ServiceBase):
-    """Provides ability to launch ironic API from wsgi app."""
+    """Provides ability to launch WSGI apps using oslo_service."""
 
     def __init__(self, name, app, conf_section):
         """Initialize, but do not start the WSGI server.
