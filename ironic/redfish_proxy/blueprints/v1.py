@@ -1,10 +1,13 @@
 from flask import Blueprint, current_app
 
+from ironic.redfish_proxy.decorators.auth import is_public_api
+
 
 v1 = Blueprint('v1', __name__)
 
 
 @v1.get('/redfish/v1')
+@is_public_api
 def response():
     v1 = {
         '@odata.type': '#ServiceRoot.v1_0_0.ServiceRoot',
