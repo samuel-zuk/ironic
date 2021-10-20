@@ -1,4 +1,4 @@
-from flask import Blueprint, current_app
+from flask import Blueprint, current_app, jsonify
 
 from ironic.redfish_proxy.decorators.auth import is_public_api
 
@@ -33,4 +33,4 @@ def response():
             }
         })
 
-    return v1
+    return jsonify(v1)

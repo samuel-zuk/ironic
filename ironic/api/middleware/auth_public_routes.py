@@ -42,6 +42,7 @@ class AuthPublicRoutes(object):
                 error_msg=_('Cannot compile public API routes: %s') % e)
 
     def __call__(self, env, start_response):
+        print(env)
         path = utils.safe_rstrip(env.get('PATH_INFO'), '/')
 
         # The information whether the API call is being performed against the
