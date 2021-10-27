@@ -27,10 +27,10 @@ try:
 except ImportError:
     gmr = None
 
+from ironic.api import app
 from ironic.common import profiler
 from ironic.common import service as ironic_service
 from ironic.common import wsgi_service
-from ironic.api import app
 from ironic import version
 
 CONF = cfg.CONF
