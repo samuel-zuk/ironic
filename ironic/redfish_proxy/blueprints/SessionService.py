@@ -11,16 +11,15 @@
 # under the License.
 
 import json
+from pudb.remote import set_trace
 
 from flask import abort
 from flask import Blueprint
 from flask import current_app
 from flask import jsonify
 from flask import request
-from keystoneauth1.identity.v3 import application_credential
+from keystoneauth1.identity import v3
 from keystoneauth1 import session
-
-from ironic.redfish_proxy.decorators.auth import is_public_api
 
 
 SessionService = Blueprint('SessionService', __name__)
@@ -45,14 +44,32 @@ def session_service_info():
     })
 
 
+"""
+@SessionService.get('/redfish/v1/SessionService/Sessions')
+def session_collection():
+    auth_url = current_app.config['keystone_authtoken']['auth_url']
+    auth_token = request.headers['X-Auth-Token']
+
+    token = v3.TokenMethod(token=auth_token)
+    auth = v3.Auth(auth_url=auth_url, auth_methods=[token])
+    sess = session.Session(auth=auth)
+
+    set_trace(term_size=(120,47))
+    token_info = json.loads(sess.get(auth_url + '/auth/tokens',
+                                     headers={'X-Subject-Token': auth_token}).text)
+    token_id = token_info['token']['audit_ids'][0]
+
+    return token_id
+"""
+
+
 @SessionService.post('/redfish/v1/SessionService/Sessions')
-@is_public_api
 def session_auth():
     body = {}
-    auth_url = current_app.config['keystone_uri']
+    auth_url = current_app.config['keystone_authtoken']['auth_url']
 
-    if request.content_type == 'application/json':
-        body = request.to_json()
+    if request.is_json:
+        body = request.get_json()
     else:
         try:
             body = json.loads(
@@ -64,15 +81,15 @@ def session_auth():
         if field not in body.keys():
             abort(400)
 
-    auth = application_credential.ApplicationCredential(
+    auth = v3.application_credential.ApplicationCredential(
         auth_url=auth_url,
         application_credential_id=body['UserName'],
         application_credential_secret=body['Password']
     )
     sess = session.Session(auth=auth)
-    token = sess.get_token()
+    auth_token = sess.get_token()
     token_info = json.loads(sess.get(auth_url + '/auth/tokens',
-                                     headers={'X-Subject-Token': token}).text)
+                                     headers={'X-Subject-Token': auth_token}).text)
     token_id = token_info['token']['audit_ids'][0]
 
     return (
@@ -85,5 +102,5 @@ def session_auth():
         }),
         {
             'Location': ('/redfish/v1/SessionService/Sessions/%s' % token_id),
-            'X-Auth-Token': token
+            'X-Auth-Token': auth_token
         })

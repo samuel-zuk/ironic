@@ -10,9 +10,7 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-from flask import current_app
 from flask import Flask
-from flask import request
 from ironic_lib import auth_basic
 from keystonemiddleware import auth_token
 
@@ -20,6 +18,7 @@ from ironic.conf import CONF
 from ironic.redfish_proxy.blueprints.root import root
 from ironic.redfish_proxy.blueprints.SessionService import SessionService
 from ironic.redfish_proxy.blueprints.v1 import v1
+from ironic.redfish_proxy.middleware.auth_public_routes import AuthPublicRoutes
 
 
 def setup_app():
@@ -30,30 +29,25 @@ def setup_app():
     app.register_blueprint(root)
     app.register_blueprint(v1)
 
-    auth_middleware = None
+    wsgi_middleware = None
     if app.config['auth_strategy'] == "keystone":
-        with app.app_context():
-            auth_middleware = auth_token.AuthProtocol(
-                current_app.wsgi_app, {'oslo_config_config': CONF})
-
-        app.config.update({'keystone_uri': (
-            app.config['keystone_authtoken']['www_authenticate_uri'])})
-
+        wsgi_middleware = auth_token.AuthProtocol(app.wsgi_app, app.config)
         app.register_blueprint(SessionService)
     elif app.config['auth_strategy'] == "http_basic":
-        auth_middleware = auth_basic.BasicAuthMiddleware(
+        wsgi_middleware = auth_basic.BasicAuthMiddleware(
             app.wsgi_app, app.config.http_basic_auth_user_file)
 
-    app.config['auth_middleware'] = auth_middleware
+    if wsgi_middleware:
+        app.config['public_routes'] = {
+            '/': AuthPublicRoutes.DEFAULT_METHODS,
+            '/redfish': AuthPublicRoutes.DEFAULT_METHODS,
+            '/redfish/v1': AuthPublicRoutes.DEFAULT_METHODS,
+            '/redfish/v1/SessionService/Sessions': ['POST']
+        }
+        app.wsgi_app = AuthPublicRoutes(app.wsgi_app,
+                                        wsgi_middleware,
+                                        app.config['public_routes'])
 
-    # TODO(sam_z): get this to work
-    @app.after_request
-    def auth(resp):
-        if (current_app.config['auth_middleware'] and (
-            'is_public_api' not in request.environ.keys()
-            or not request.environ['is_public_api'])):
-            return current_app.make_response(
-                current_app.config['auth_middleware'])
     return app.wsgi_app
 
 
