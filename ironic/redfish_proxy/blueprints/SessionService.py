@@ -11,16 +11,16 @@
 # under the License.
 
 import json
-from pudb.remote import set_trace
 
 from flask import abort
 from flask import Blueprint
 from flask import current_app
 from flask import jsonify
+from flask import make_response
 from flask import request
 from keystoneauth1.identity import v3
 from keystoneauth1 import session
-
+import requests
 
 SessionService = Blueprint('SessionService', __name__)
 
@@ -44,23 +44,26 @@ def session_service_info():
     })
 
 
-"""
 @SessionService.get('/redfish/v1/SessionService/Sessions')
-def session_collection():
+def session_collection_info():
     auth_url = current_app.config['keystone_authtoken']['auth_url']
     auth_token = request.headers['X-Auth-Token']
 
-    token = v3.TokenMethod(token=auth_token)
-    auth = v3.Auth(auth_url=auth_url, auth_methods=[token])
-    sess = session.Session(auth=auth)
+    # Query the identity service to get the token's audit ID
+    req = requests.get(auth_url + '/auth/tokens',
+                       headers={'X-Auth-Token': auth_token,
+                                'X-Subject-Token': auth_token})
+    token_id = req.json()['token']['audit_ids'][0]
 
-    set_trace(term_size=(120,47))
-    token_info = json.loads(sess.get(auth_url + '/auth/tokens',
-                                     headers={'X-Subject-Token': auth_token}).text)
-    token_id = token_info['token']['audit_ids'][0]
-
-    return token_id
-"""
+    return jsonify({
+        '@odata.type': '#SessionCollection.SessionCollection',
+        'Name': 'Redfish Proxy Session Collection',
+        'Members@odata.count': 1,
+        'Members': [
+            {'@odata.id': '/redfish/v1/SessionService/Sessions/%s' % token_id}
+        ],
+        '@odata.id': '/redfish/v1/SessionService/Sessions'
+    })
 
 
 @SessionService.post('/redfish/v1/SessionService/Sessions')
@@ -88,19 +91,70 @@ def session_auth():
     )
     sess = session.Session(auth=auth)
     auth_token = sess.get_token()
-    token_info = json.loads(sess.get(auth_url + '/auth/tokens',
-                                     headers={'X-Subject-Token': auth_token}).text)
+    token_info = sess.get(auth_url + '/auth/tokens',
+                          headers={'X-Subject-Token': auth_token}).json()
     token_id = token_info['token']['audit_ids'][0]
 
     return (
         jsonify({
             '@odata.type': '#Session.1.0.0.Session',
-            '@odata.id': ('/redfish/v1/SessionService/Sessions/%s' % token_id),
+            '@odata.id': '/redfish/v1/SessionService/Sessions/%s' % token_id,
             'Id': token_id,
-            'Name': ('User Session %s' % token_id),
+            'Name': 'User Session %s' % token_id,
             'UserName': body['UserName']
         }),
         {
-            'Location': ('/redfish/v1/SessionService/Sessions/%s' % token_id),
+            'Location': '/redfish/v1/SessionService/Sessions/%s' % token_id,
             'X-Auth-Token': auth_token
         })
+
+
+@SessionService.get('/redfish/v1/SessionService/Sessions/<sess_id>')
+def session_info(sess_id):
+    auth_url = current_app.config['keystone_authtoken']['auth_url']
+    auth_token = request.headers['X-Auth-Token']
+
+    # Query the identity service to get the token's audit ID, check to make
+    # sure that it matches with the session id in the URL.
+    req = requests.get(auth_url + '/auth/tokens',
+                       headers={'X-Auth-Token': auth_token,
+                                'X-Subject-Token': auth_token})
+    token_id = req.json()['token']['audit_ids'][0]
+
+    if token_id != sess_id:
+        abort(404)
+
+    app_cred_id = req.json()['token']['application_credential']['id']
+
+    return jsonify({
+        '@odata.id': '/redfish/v1/SessionService/Sessions/%s' % token_id,
+        '@odata.type': '#Session.1.0.0.Session',
+        'Id': token_id,
+        'Name': 'User Session %s' % token_id,
+        'UserName': app_cred_id
+    })
+
+
+@SessionService.delete('/redfish/v1/SessionService/Sessions/<sess_id>')
+def end_session(sess_id):
+    auth_url = current_app.config['keystone_authtoken']['auth_url']
+    auth_token = request.headers['X-Auth-Token']
+
+    # Query the identity service to get the token's audit ID, check to make
+    # sure that it matches with the session id in the URL.
+    req = requests.get(auth_url + '/auth/tokens',
+                       headers={'X-Auth-Token': auth_token,
+                                'X-Subject-Token': auth_token})
+    token_id = req.json()['token']['audit_ids'][0]
+
+    if token_id != sess_id:
+        abort(404)
+
+    req = requests.delete(auth_url + '/auth/tokens',
+                          headers={'X-Auth-Token': auth_token,
+                                   'X-Subject-Token': auth_token})
+
+    if req.status_code // 100 != 2:
+        abort(500)
+    else:
+        return make_response(('', 204))
