@@ -20,7 +20,8 @@ from flask import make_response
 from flask import request
 from keystoneauth1.identity import v3
 from keystoneauth1 import session
-import requests
+from keystoneauth1 import token_endpoint
+
 
 SessionService = Blueprint('SessionService', __name__)
 
@@ -50,10 +51,11 @@ def session_collection_info():
     auth_token = request.headers['X-Auth-Token']
 
     # Query the identity service to get the token's audit ID
-    req = requests.get(auth_url + '/auth/tokens',
-                       headers={'X-Auth-Token': auth_token,
-                                'X-Subject-Token': auth_token})
-    token_id = req.json()['token']['audit_ids'][0]
+    auth = token_endpoint.Token(endpoint=auth_url, token=auth_token)
+    sess = session.Session(auth=auth)
+    token_info = sess.get(auth_url + '/auth/tokens',
+                          headers={'X-Subject-Token': auth_token}).json()
+    token_id = token_info['token']['audit_ids'][0]
 
     return jsonify({
         '@odata.type': '#SessionCollection.SessionCollection',
@@ -116,15 +118,16 @@ def session_info(sess_id):
 
     # Query the identity service to get the token's audit ID, check to make
     # sure that it matches with the session id in the URL.
-    req = requests.get(auth_url + '/auth/tokens',
-                       headers={'X-Auth-Token': auth_token,
-                                'X-Subject-Token': auth_token})
-    token_id = req.json()['token']['audit_ids'][0]
+    auth = token_endpoint.Token(endpoint=auth_url, token=auth_token)
+    sess = session.Session(auth=auth)
+    token_info = sess.get(auth_url + '/auth/tokens',
+                          headers={'X-Subject-Token': auth_token}).json()
+    token_id = token_info['token']['audit_ids'][0]
 
     if token_id != sess_id:
         abort(404)
 
-    app_cred_id = req.json()['token']['application_credential']['id']
+    app_cred_id = token_info['token']['application_credential']['id']
 
     return jsonify({
         '@odata.id': '/redfish/v1/SessionService/Sessions/%s' % token_id,
@@ -142,17 +145,17 @@ def end_session(sess_id):
 
     # Query the identity service to get the token's audit ID, check to make
     # sure that it matches with the session id in the URL.
-    req = requests.get(auth_url + '/auth/tokens',
-                       headers={'X-Auth-Token': auth_token,
-                                'X-Subject-Token': auth_token})
-    token_id = req.json()['token']['audit_ids'][0]
+    auth = token_endpoint.Token(endpoint=auth_url, token=auth_token)
+    sess = session.Session(auth=auth)
+    token_info = sess.get(auth_url + '/auth/tokens',
+                          headers={'X-Subject-Token': auth_token}).json()
+    token_id = token_info['token']['audit_ids'][0]
 
     if token_id != sess_id:
         abort(404)
 
-    req = requests.delete(auth_url + '/auth/tokens',
-                          headers={'X-Auth-Token': auth_token,
-                                   'X-Subject-Token': auth_token})
+    req = sess.delete(auth_url + '/auth/tokens',
+                      headers={'X-Subject-Token': auth_token})
 
     if req.status_code // 100 != 2:
         abort(500)
