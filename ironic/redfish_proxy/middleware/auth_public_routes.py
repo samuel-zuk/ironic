@@ -54,6 +54,7 @@ class AuthPublicRoutes(object):
         # The information whether the API call is being performed against the
         # public API is required for some other components. Saving it to the
         # WSGI environment is reasonable thereby.
+        env['is_public_api'] = False
         for route in self.public_api_routes.keys():
             if re.match(route, path):
                 # If the value corresponding to this route is None (the value
@@ -65,8 +66,7 @@ class AuthPublicRoutes(object):
                     env['is_public_api'] = (True if method
                                             in self.public_api_routes[route]
                                             else False)
-            else:
-                env['is_public_api'] = False
+                break
 
         if env['is_public_api']:
             return self._app(env, start_response)
