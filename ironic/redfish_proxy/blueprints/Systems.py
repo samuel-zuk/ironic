@@ -15,6 +15,7 @@ from flask import Blueprint
 from flask import g
 from flask import jsonify
 
+from ironic.common import exception
 from ironic.objects.node import Node
 from ironic.redfish_proxy import utils as proxy_utils
 
@@ -28,7 +29,7 @@ def systems_collection_info():
         project = proxy_utils.check_list_policy(context=g.context,
                                                 object_type='node')
     except Exception:
-        abort(401)
+        abort(403)
 
     node_list = Node.list(g.context,
                           filters={'project': project},
@@ -47,7 +48,43 @@ def systems_collection_info():
 
 @Systems.get('/redfish/v1/Systems/<node_uuid>')
 def system_info(node_uuid):
-    return 'Info for System with id %s' % node_uuid
+    try:
+        node = proxy_utils.check_node_policy_and_retrieve(
+            g.context, 'baremetal:node:get', node_uuid)
+    except exception.HTTPForbidden:
+        abort(403)
+    except exception.NodeNotFound:
+        abort(404)
+
+    node_dict = {
+        '@odata.type': '#ComputerSystem.v1.0.0.ComputerSystem',
+        'Id': node_uuid,
+        'UUID': node_uuid,
+        'PowerState': (
+            proxy_utils.ironic_to_redfish_power_state(node.power_state)),
+        'Actions': {
+            '#ComputerSystem.Reset': {
+                'target': (
+                    '/redfish/v1/Systems/%s/Actions/ComputerSystem.Reset'
+                    % node_uuid),
+                'ResetType@Redfish.AllowableValues': [
+                    'On',
+                    'ForceOn',
+                    'ForceOff',
+                    'ForceRestart',
+                    'GracefulRestart',
+                    'GracefulShutdown'
+                ]
+            }
+        },
+        '@odata.id': '/redfish/v1/Systems/%s' % node_uuid
+    }
+    if node.name:
+        node_dict['Name'] = node.name
+    if node.description:
+        node_dict['Description'] = node.description
+
+    return jsonify(node_dict)
 
 
 @Systems.post('/redfish/v1/Systems/<node_uuid>/Actions/ComputerSystem.Reset')

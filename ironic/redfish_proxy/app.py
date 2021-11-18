@@ -33,10 +33,10 @@ def setup_app():
     app.register_blueprint(Systems)
 
     wsgi_middleware = None
-    if app.config['auth_strategy'] == "keystone":
+    if app.config['auth_strategy'] == 'keystone':
         wsgi_middleware = auth_token.AuthProtocol(app.wsgi_app, app.config)
         app.register_blueprint(SessionService)
-    elif app.config['auth_strategy'] == "http_basic":
+    elif app.config['auth_strategy'] == 'http_basic':
         wsgi_middleware = auth_basic.BasicAuthMiddleware(
             app.wsgi_app, app.config.http_basic_auth_user_file)
 
@@ -45,18 +45,14 @@ def setup_app():
             '/': AuthPublicRoutes.DEFAULT_METHODS,
             '/redfish': AuthPublicRoutes.DEFAULT_METHODS,
             '/redfish/v1': AuthPublicRoutes.DEFAULT_METHODS,
-            '/redfish/v1/SessionService/Sessions': ['POST']
         }
+        if app.config['auth_strategy'] == 'keystone':
+            app.config['public_routes'].update({
+                '/redfish/v1/SessionService/Sessions': ['POST']
+            })
         app.wsgi_app = AuthPublicRoutes(app.wsgi_app,
                                         wsgi_middleware,
                                         app.config['public_routes'])
-
-    app.config['public_routes'] = {
-        '/': AuthPublicRoutes.DEFAULT_METHODS,
-        '/redfish': AuthPublicRoutes.DEFAULT_METHODS,
-        '/redfish/v1': AuthPublicRoutes.DEFAULT_METHODS,
-        '/redfish/v1/SessionService/Sessions': ['POST']
-    }
 
     with app.app_context():
         ContextHooks.register()
