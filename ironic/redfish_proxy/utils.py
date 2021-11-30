@@ -15,6 +15,7 @@ from oslo_utils import uuidutils
 
 from ironic.common import exception
 from ironic.common import policy
+from ironic.common import states as ir_states
 from ironic import objects
 
 
@@ -31,16 +32,35 @@ def ironic_to_redfish_power_state(node_power_state):
         return 'Unknown'
 
     redfish_states = {
-        'power on': 'On',
-        'power off': 'Off',
-        'rebooting': 'Reset',
-        'soft rebooting': 'Reset'
+        ir_states.POWER_ON: 'On',
+        ir_states.POWER_OFF: 'Off',
+        ir_states.REBOOT: 'Reset',
+        ir_states.SOFT_REBOOT: 'Reset'
     }
 
     try:
         return redfish_states[node_power_state]
     except KeyError:
         raise ValueError('Invalid node power state "%s"' % node_power_state)
+
+
+def redfish_reset_type_to_ironic_power_state(target_state):
+    if target_state is None:
+        raise ValueError('Target power state must not be None')
+
+    ironic_states = {
+        'On': ir_states.POWER_ON,
+        'ForceOn': ir_states.POWER_ON,
+        'GracefulShutdown': ir_states.SOFT_POWER_OFF,
+        'ForceOff': ir_states.POWER_OFF,
+        'GracefulRestart': ir_states.SOFT_REBOOT,
+        'ForceRestart': ir_states.REBOOT
+    }
+
+    try:
+        return ironic_states[target_state]
+    except KeyError:
+        raise ValueError('Invalid node power state "%s"' % target_state)
 
 
 def check_list_policy(context, object_type, owner=None):

@@ -20,6 +20,7 @@ from ironic.redfish_proxy.blueprints.SessionService import SessionService
 from ironic.redfish_proxy.blueprints.Systems import Systems
 from ironic.redfish_proxy.blueprints.v1 import v1
 from ironic.redfish_proxy.hooks import context as ContextHooks
+from ironic.redfish_proxy.hooks import rpcapi as RPCAPIHooks
 from ironic.redfish_proxy.middleware.auth_public_routes import AuthPublicRoutes
 
 
@@ -56,6 +57,7 @@ def setup_app():
 
     with app.app_context():
         ContextHooks.register()
+        RPCAPIHooks.register()
 
     return app.wsgi_app
 

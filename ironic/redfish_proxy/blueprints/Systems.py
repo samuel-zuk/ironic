@@ -10,12 +10,17 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import json
+
 from flask import abort
 from flask import Blueprint
 from flask import g
 from flask import jsonify
+from flask import make_response
+from flask import request
 
 from ironic.common import exception
+from ironic.common import states as ir_states
 from ironic.objects.node import Node
 from ironic.redfish_proxy import utils as proxy_utils
 
@@ -89,4 +94,43 @@ def system_info(node_uuid):
 
 @Systems.post('/redfish/v1/Systems/<node_uuid>/Actions/ComputerSystem.Reset')
 def set_system_power_state(node_uuid):
-    return 'Setting the power state of system %s' % node_uuid
+    # Make sure the POST request body is json; if not, attempt to jsonify it
+    body = {}
+    if request.is_json:
+        body = request.get_json()
+    else:
+        try:
+            body = json.loads(
+                list(request.form.to_dict().keys())[0])
+        except json.JSONDecodeError:
+            abort(400)
+
+    # Make sure the ResetType is specified and valid
+    try:
+        target_state = proxy_utils.redfish_reset_type_to_ironic_power_state(
+            body['ResetType'])
+    except (KeyError, ValueError):
+        abort(400)
+    except Exception:
+        raise
+
+    # Make sure we're allowed by policy to access this node
+    try:
+        node = proxy_utils.check_node_policy_and_retrieve(
+            g.context, 'baremetal:node:set_power_state', node_uuid)
+    except exception.HTTPForbidden:
+        abort(403)
+    except exception.NodeNotFound:
+        abort(404)
+
+    if node.provision_state in (ir_states.CLEANWAIT, ir_states.CLEANING):
+        abort(400)        
+
+    topic = g.rpcapi.get_topic_for(node)
+    g.rpcapi.change_node_power_state(g.context,
+                                     node.uuid,
+                                     target_state,
+                                     timeout=None,
+                                     topic=topic)
+
+    return make_response(('', 204))
