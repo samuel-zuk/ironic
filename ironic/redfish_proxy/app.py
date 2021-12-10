@@ -16,9 +16,9 @@ from keystonemiddleware import auth_token
 
 from ironic.conf import CONF
 from ironic.redfish_proxy.blueprints.root import root
+from ironic.redfish_proxy.blueprints.ServiceRoot import ServiceRoot
 from ironic.redfish_proxy.blueprints.SessionService import SessionService
 from ironic.redfish_proxy.blueprints.Systems import Systems
-from ironic.redfish_proxy.blueprints.v1 import v1
 from ironic.redfish_proxy.hooks import context as ContextHooks
 from ironic.redfish_proxy.hooks import rpcapi as RPCAPIHooks
 from ironic.redfish_proxy.middleware.auth_public_routes import AuthPublicRoutes
@@ -30,7 +30,7 @@ def setup_app():
     app.url_map.strict_slashes = False
 
     app.register_blueprint(root)
-    app.register_blueprint(v1)
+    app.register_blueprint(ServiceRoot)
     app.register_blueprint(Systems)
 
     wsgi_middleware = None
@@ -46,6 +46,8 @@ def setup_app():
             '/': AuthPublicRoutes.DEFAULT_METHODS,
             '/redfish': AuthPublicRoutes.DEFAULT_METHODS,
             '/redfish/v1': AuthPublicRoutes.DEFAULT_METHODS,
+            '/redfish/v1/odata': AuthPublicRoutes.DEFAULT_METHODS,
+            '/redfish/v1/$metadata': AuthPublicRoutes.DEFAULT_METHODS
         }
         if app.config['auth_strategy'] == 'keystone':
             app.config['public_routes'].update({

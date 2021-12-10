@@ -124,7 +124,7 @@ def set_system_power_state(node_uuid):
         abort(404)
 
     if node.provision_state in (ir_states.CLEANWAIT, ir_states.CLEANING):
-        abort(400)        
+        abort(400)
 
     topic = g.rpcapi.get_topic_for(node)
     g.rpcapi.change_node_power_state(g.context,

@@ -12,11 +12,17 @@
 
 from flask import Blueprint
 from flask import jsonify
+from flask import redirect
 
 
 root = Blueprint('root', __name__)
 
 
 @root.get('/redfish')
-def response():
+def redfish_root():
     return jsonify({'v1': '/redfish/v1/'})
+
+
+@root.get('/')
+def redirect_redfish_root():
+    return redirect('/redfish', 301)

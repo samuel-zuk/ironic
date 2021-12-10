@@ -36,12 +36,14 @@ class AuthPublicRoutes(object):
         # 401 Authentication Required instead of 404 Not Found
         route_pattern_tpl = '%s(\\.json|\\.xml)?$'
 
+        # If a list of routes is provided instead of a dict of routes and
+        # methods, allow all methods for the listed routes.
         if type(public_api_routes) == list:
             api_routes = dict.fromkeys(public_api_routes, self.ALL_METHODS)
 
         try:
             self.public_api_routes = {
-                re.compile(route_pattern_tpl % route): method
+                re.compile(route_pattern_tpl % re.escape(route)): method
                 for route, method in api_routes.items()
             }
         except re.error as e:
