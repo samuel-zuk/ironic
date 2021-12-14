@@ -30,12 +30,18 @@ Systems = Blueprint('Systems', __name__)
 
 @Systems.get('/redfish/v1/Systems')
 def systems_collection_info():
+    """Returns a Systems Collection containing a list of Ironic nodes.
+
+    Lists all the nodes the user has access to, represented here as Redfish
+    System objects. Requires the user to be authenticated.
+    """
+    # Ensure the user is allowed by policy to list baremetal nodes.
     try:
-        project = proxy_utils.check_list_policy(context=g.context,
-                                                object_type='node')
+        project = proxy_utils.check_list_policy(g.context, object_type='node')
     except Exception:
         abort(403)
 
+    # Query the DB to get the list of nodes to be returned.
     node_list = Node.list(g.context,
                           filters={'project': project},
                           fields=['uuid'])
@@ -53,6 +59,13 @@ def systems_collection_info():
 
 @Systems.get('/redfish/v1/Systems/<node_uuid>')
 def system_info(node_uuid):
+    """Returns the Ironic node with the specified UUID as a Redfish System.
+
+    Requires the user to be authenticated and to be allowed by policy to get
+    the node in question. Currently, the only info to be returned is the node
+    UUID, name, description, and power state.
+    """
+    # Ensure the user is allowed by policy to get this node.
     try:
         node = proxy_utils.check_node_policy_and_retrieve(
             g.context, 'baremetal:node:get', node_uuid)
@@ -84,6 +97,8 @@ def system_info(node_uuid):
         },
         '@odata.id': '/redfish/v1/Systems/%s' % node_uuid
     }
+
+    # Include name and description if the node has either or both.
     if node.name:
         node_dict['Name'] = node.name
     if node.description:
@@ -94,7 +109,13 @@ def system_info(node_uuid):
 
 @Systems.post('/redfish/v1/Systems/<node_uuid>/Actions/ComputerSystem.Reset')
 def set_system_power_state(node_uuid):
-    # Make sure the POST request body is json; if not, attempt to jsonify it
+    """Initiates a change in the power state of the specified node.
+
+    Requires the user to be authenticated and to be allowed by policy to get
+    the node in question. Expects a body containing a ResetType key with the
+    value of the ResetType to be initiated.
+    """
+    # Check if the POST request body is json; if not, attempt to jsonify it.
     body = {}
     if request.is_json:
         body = request.get_json()
@@ -105,7 +126,8 @@ def set_system_power_state(node_uuid):
         except json.JSONDecodeError:
             abort(400)
 
-    # Make sure the ResetType is specified and valid
+    # Ensure the ResetType is specified and valid, get the corresponding
+    # target Ironic power state to be sent with the RPC call.
     try:
         target_state = proxy_utils.redfish_reset_type_to_ironic_power_state(
             body['ResetType'])
@@ -114,7 +136,7 @@ def set_system_power_state(node_uuid):
     except Exception:
         raise
 
-    # Make sure we're allowed by policy to access this node
+    # Ensure the user is allowed by policy to access this node.
     try:
         node = proxy_utils.check_node_policy_and_retrieve(
             g.context, 'baremetal:node:set_power_state', node_uuid)
@@ -123,9 +145,11 @@ def set_system_power_state(node_uuid):
     except exception.NodeNotFound:
         abort(404)
 
+    # If the node is cleaning, do not allow for it to be reset.
     if node.provision_state in (ir_states.CLEANWAIT, ir_states.CLEANING):
         abort(400)
 
+    # Make the RPC call.
     topic = g.rpcapi.get_topic_for(node)
     g.rpcapi.change_node_power_state(g.context,
                                      node.uuid,

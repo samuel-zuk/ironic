@@ -17,8 +17,10 @@ from ironic.conductor import rpcapi
 
 
 def _attach_rpcapi():
+    """Attach a reference to the Ironic RPCAPI to the Flask global context."""
     g.rpcapi = rpcapi.ConductorAPI()
 
 
 def register():
+    """Register the context handlers on the Flask application."""
     current_app.before_request(_attach_rpcapi)

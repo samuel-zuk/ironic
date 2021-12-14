@@ -45,7 +45,14 @@ def ironic_to_redfish_power_state(node_power_state):
 
 
 def redfish_reset_type_to_ironic_power_state(target_state):
-    if target_state is None:
+    """Returns the target Ironic power state implied by the given ResetType.
+
+    :param: target_state: the ResetType specified by the Redfish client
+
+    :raises: ValueError if the ResetType is unspecified or invalid
+    :return: the target Ironic power state that corresponds to the ResetType
+    """
+    if not target_state:
         raise ValueError('Target power state must not be None')
 
     ironic_states = {
@@ -154,8 +161,8 @@ def check_node_policy_and_retrieve(context, policy_name, node_ident,
         else:
             raise
 
-    # Project scoped users will get a 404 where as system
-    # scoped should get a 403
+    # Project scoped users should get a 404 where as system scoped users should
+    # get a 403.
     cdict = context.to_policy_values()
     if cdict.get('project_id', False):
         conceal_node = node_ident
@@ -192,5 +199,5 @@ def get_rpc_node_by_uuid(context, node_ident):
     if uuidutils.is_uuid_like(node_ident):
         return objects.Node.get_by_uuid(context, node_ident)
 
-    # Ensure we raise the same exception as we did for the Juno release
+    # Ensure we raise the same exception as we did for the Juno release.
     raise exception.NodeNotFound(node=node_ident)

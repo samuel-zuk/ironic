@@ -26,9 +26,10 @@ ID_FORMAT = (r'^req-[a-f0-9]{8}-[a-f0-9]{4}-'
 
 
 def _prepare_context():
+    """Attach the Ironic context to the global context of a Flask request."""
     is_public_api = request.environ.get('is_public_api', False)
 
-    # set the global_request_id if we have an inbound request id
+    # Set the global_request_id if we have an inbound request id.
     gr_id = request.headers.get(INBOUND_HEADER, "")
     if re.match(ID_FORMAT, gr_id):
         request.environ[GLOBAL_REQ_ID] = gr_id
@@ -36,7 +37,7 @@ def _prepare_context():
     ctx = context.RequestContext.from_environ(request.environ,
                                               is_public_api=is_public_api)
 
-    # Do not pass any token with context for noauth or http_basic mode
+    # Do not pass any token with context for noauth or http_basic mode.
     if current_app.config['auth_strategy'] != 'keystone':
         ctx.auth_token = None
 
@@ -46,8 +47,9 @@ def _prepare_context():
 
 
 def _verify_context(resp):
+    """Attach the OpenStack Request ID to the response if context is valid."""
     if g.context == {}:
-        # An incorrect url path will not create RequestContext
+        # An incorrect url path will not create RequestContext.
         return resp
     # NOTE(lintan): RequestContext will generate a request_id if no one
     # passing outside, so it always contain a request_id.
@@ -56,5 +58,6 @@ def _verify_context(resp):
 
 
 def register():
+    """Register the context handlers on the Flask application."""
     current_app.before_request(_prepare_context)
     current_app.after_request(_verify_context)

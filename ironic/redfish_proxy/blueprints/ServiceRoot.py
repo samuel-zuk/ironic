@@ -21,6 +21,7 @@ ServiceRoot = Blueprint('ServiceRoot', __name__)
 
 @ServiceRoot.get('/redfish/v1')
 def response():
+    """Return the Redfish ServiceRoot as defined by the Redfish spec."""
     v1 = {
         '@odata.type': '#ServiceRoot.v1_0_0.ServiceRoot',
         'Id': 'IronicProxy',
@@ -33,6 +34,8 @@ def response():
         '@odata.id': '/redfish/v1/'
     }
 
+    # Only expose information about Sessions and the SessionService if the
+    # underlying Ironic service is using Keystone for authentication.
     if current_app.config['auth_strategy'] == 'keystone':
         v1.update({
             'SessionService': {
@@ -50,8 +53,11 @@ def response():
 
 @ServiceRoot.get('/redfish/v1/odata')
 def odata_document():
-    # Modeled after the sample service document provided in section 6.3 of:
-    # https://www.dmtf.org/sites/default/files/standards/documents/DSP2052_1.0.0.pdf
+    """Return the OData Document as specified in the Redfish spec.
+
+    Modeled after the sample service document provided in section 6.3 of:
+    https://www.dmtf.org/sites/default/files/standards/documents/DSP2052_1.0.0.pdf
+    """
     doc = {
         '@odata.context': '/redfish/v1/$metadata',
         'value': [
@@ -68,6 +74,8 @@ def odata_document():
         ]
     }
 
+    # Only expose information about Sessions and the SessionService if the
+    # underlying Ironic service is using Keystone for authentication.
     if current_app.config['auth_strategy'] == 'keystone':
         doc['value'].extend((
             {
@@ -87,10 +95,13 @@ def odata_document():
 
 @ServiceRoot.get('/redfish/v1/$metadata')
 def metadata_document():
-    # placeholder
-    doc_file = open('ironic/redfish_proxy/schema.xml', 'r')
-    doc_str = doc_file.read()
-    doc_file.close()
+    """Return the service metadata document as specified in the Redfish spec.
+
+    Modeled after the sample service document provided in section 6.3 of:
+    https://www.dmtf.org/sites/default/files/standards/documents/DSP2052_1.0.0.pdf
+    """
+    with open('ironic/redfish_proxy/schema.xml', 'r') as doc_file:
+        doc_str = doc_file.read()
 
     response = make_response(doc_str, 200)
     response.headers['Content-Type'] = 'application/xml'

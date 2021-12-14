@@ -28,6 +28,7 @@ SessionService = Blueprint('SessionService', __name__)
 
 @SessionService.get('/redfish/v1/SessionService')
 def session_service_info():
+    """Return details about the emulated Redfish SessionService."""
     return jsonify({
         '@odata.type': '#SessionService.v1_0_0.SessionService',
         'Id': 'KeystoneAuthProxy',
@@ -37,7 +38,7 @@ def session_service_info():
             'Health': 'OK'
         },
         'ServiceEnabled': True,
-        'SessionTimeout': 86400,
+        'SessionTimeout': 3600,
         'Sessions': {
             '@odata.id': '/redfish/v1/SessionService/Sessions'
         },
@@ -47,10 +48,16 @@ def session_service_info():
 
 @SessionService.get('/redfish/v1/SessionService/Sessions')
 def session_collection_info():
+    """Return a Redfish SessionCollection containing the active Session.
+
+    Will use the currently active X-Auth-Token to determine the corresponding
+    Session's URI, returning this as the sole Collection member. The identifier
+    to be used shall be the Keystone token's audit ID.
+    """
     auth_url = current_app.config['keystone_authtoken']['auth_url']
     auth_token = request.headers['X-Auth-Token']
 
-    # Query the identity service to get the token's audit ID
+    # Query the identity service to get the token's audit ID.
     auth = token_endpoint.Token(endpoint=auth_url, token=auth_token)
     sess = session.Session(auth=auth)
     token_info = sess.get(auth_url + '/auth/tokens',
@@ -70,9 +77,18 @@ def session_collection_info():
 
 @SessionService.post('/redfish/v1/SessionService/Sessions')
 def session_auth():
+    """Attempt to create a new Session from a Keystone application credential.
+
+    Handles POST requests and expects a body containing a UserName key with
+    the value of the app cred's UUID, and a Password key with the value of the
+    app cred's secret. Will return basic info about the newly created Session
+    in the response body and the token itself in the X-Auth-Token response
+    header field.
+    """
     body = {}
     auth_url = current_app.config['keystone_authtoken']['auth_url']
 
+    # Check if the POST request body is json; if not, attempt to jsonify it.
     if request.is_json:
         body = request.get_json()
     else:
@@ -82,10 +98,12 @@ def session_auth():
         except json.JSONDecodeError:
             abort(400)
 
+    # Ensure that both required fields are present.
     for field in ('UserName', 'Password'):
         if field not in body.keys():
             abort(400)
 
+    # Use the provided credentials to attempt to fetch a new token.
     auth = v3.application_credential.ApplicationCredential(
         auth_url=auth_url,
         application_credential_id=body['UserName'],
@@ -93,6 +111,8 @@ def session_auth():
     )
     sess = session.Session(auth=auth)
     auth_token = sess.get_token()
+
+    # Query the Identity service to get the audit ID of the new token.
     token_info = sess.get(auth_url + '/auth/tokens',
                           headers={'X-Subject-Token': auth_token}).json()
     token_id = token_info['token']['audit_ids'][0]
@@ -113,6 +133,12 @@ def session_auth():
 
 @SessionService.get('/redfish/v1/SessionService/Sessions/<sess_id>')
 def session_info(sess_id):
+    """Returns information about the currently active Session.
+
+    Currently, this will only return information if the session ID being
+    queried matches that of the token used for authentication, which is
+    required.
+    """
     auth_url = current_app.config['keystone_authtoken']['auth_url']
     auth_token = request.headers['X-Auth-Token']
 
@@ -122,12 +148,12 @@ def session_info(sess_id):
     sess = session.Session(auth=auth)
     token_info = sess.get(auth_url + '/auth/tokens',
                           headers={'X-Subject-Token': auth_token}).json()
+
     token_id = token_info['token']['audit_ids'][0]
+    app_cred_id = token_info['token']['application_credential']['id']
 
     if token_id != sess_id:
         abort(404)
-
-    app_cred_id = token_info['token']['application_credential']['id']
 
     return jsonify({
         '@odata.id': '/redfish/v1/SessionService/Sessions/%s' % token_id,
@@ -140,6 +166,13 @@ def session_info(sess_id):
 
 @SessionService.delete('/redfish/v1/SessionService/Sessions/<sess_id>')
 def end_session(sess_id):
+    """Ends the specified Session, revoking the Keystone auth token.
+
+    Will only succeed if the specified session ID matches that of the token
+    being used for authentication, which is required. Note that this does not
+    revoke the application credential; it revokes the auth token that was
+    previously created using said credential.
+    """
     auth_url = current_app.config['keystone_authtoken']['auth_url']
     auth_token = request.headers['X-Auth-Token']
 
@@ -157,6 +190,7 @@ def end_session(sess_id):
     req = sess.delete(auth_url + '/auth/tokens',
                       headers={'X-Subject-Token': auth_token})
 
+    # If we do not get a 2xx status code, something went wrong.
     if req.status_code // 100 != 2:
         abort(500)
     else:

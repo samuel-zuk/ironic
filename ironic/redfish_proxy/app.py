@@ -25,8 +25,10 @@ from ironic.redfish_proxy.middleware.auth_public_routes import AuthPublicRoutes
 
 
 def setup_app():
+    """Sets up the Ironic Redfish proxy, returns the underlying WSGI app."""
     app = Flask(__name__)
     app.config.update(CONF)
+    # (e.g. requests to /endpoint/ and /endpoint should resolve identitcally)
     app.url_map.strict_slashes = False
 
     app.register_blueprint(root)
@@ -36,10 +38,14 @@ def setup_app():
     wsgi_middleware = None
     if app.config['auth_strategy'] == 'keystone':
         wsgi_middleware = auth_token.AuthProtocol(app.wsgi_app, app.config)
+        # Only enable Sessions auth if keystone is in use.
         app.register_blueprint(SessionService)
     elif app.config['auth_strategy'] == 'http_basic':
         wsgi_middleware = auth_basic.BasicAuthMiddleware(
             app.wsgi_app, app.config.http_basic_auth_user_file)
+    # If noauth is not specifically specified, abort initialization.
+    elif app.config['auth_strategy'] != 'noauth':
+        raise Exception('A valid authentication strategy was not specified.')
 
     if wsgi_middleware:
         app.config['public_routes'] = {
@@ -53,6 +59,7 @@ def setup_app():
             app.config['public_routes'].update({
                 '/redfish/v1/SessionService/Sessions': ['POST']
             })
+        # Wrap the underlying WSGI app if we're using auth middleware.
         app.wsgi_app = AuthPublicRoutes(app.wsgi_app,
                                         wsgi_middleware,
                                         app.config['public_routes'])
@@ -65,6 +72,7 @@ def setup_app():
 
 
 class RedfishProxyApplication(object):
+    """A callable object wrapping the Ironic Redfish proxy application."""
     def __init__(self):
         self.app = setup_app()
 

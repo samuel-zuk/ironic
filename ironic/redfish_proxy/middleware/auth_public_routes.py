@@ -18,13 +18,12 @@ from ironic.common import utils
 
 
 class AuthPublicRoutes(object):
-    """A wrapper on authentication middleware.
+    """An authentication middleware wrapper, allows requests to public routes.
 
-    Does not perform verification of authentication tokens
-    for public routes in the API.
-
+    Does not perform verification of authentication tokens for public routes
+    in the API. Enables only certain methods of specified routes to be made
+    public. Extends ironic/api/middleware/auth_public_routes.py.
     """
-
     ALL_METHODS = None
     DEFAULT_METHODS = ['GET', 'HEAD']
 
@@ -33,7 +32,7 @@ class AuthPublicRoutes(object):
         self._app = app
         self._middleware = auth
         # TODO(mrda): Remove .xml and ensure that doesn't result in a
-        # 401 Authentication Required instead of 404 Not Found
+        # 401 Authentication Required instead of 404 Not Found.
         route_pattern_tpl = '%s(\\.json|\\.xml)?$'
 
         # If a list of routes is provided instead of a dict of routes and
