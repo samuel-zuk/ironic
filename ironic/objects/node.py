@@ -15,6 +15,7 @@
 from oslo_config import cfg
 from oslo_log import log
 from oslo_utils import strutils
+from oslo_utils import timeutils
 from oslo_utils import uuidutils
 from oslo_utils import versionutils
 from oslo_versionedobjects import base as object_base
@@ -544,6 +545,12 @@ class Node(base.IronicObject, object_base.VersionedObjectDictCompat):
         node = cls._from_db_object(context, cls(), db_node)
         return node
 
+    def get_interface(self, iface):
+        iface_name = '%s_interface' % iface
+        impl_name = self.instance_info.get(iface_name,
+                                           getattr(self, iface_name))
+        return impl_name
+
     def _convert_deploy_step_field(self, target_version,
                                    remove_unavailable_fields=True):
         # NOTE(rloo): Typically we set the value to None. However,
@@ -684,6 +691,43 @@ class Node(base.IronicObject, object_base.VersionedObjectDictCompat):
 
         self._convert_network_data_field(target_version,
                                          remove_unavailable_fields)
+
+    def set_driver_internal_info(self, key, value):
+        """Set a `driver_internal_info` value.
+
+        Setting a `driver_internal_info` dict value via this method
+        ensures that this field will be flagged for saving.
+
+        :param key: Key of item to set
+        :param value: Value of item to set
+        """
+        self.driver_internal_info[key] = value
+        self._changed_fields.add('driver_internal_info')
+
+    def del_driver_internal_info(self, key, default_value=None):
+        """Pop a value from the driver_internal_info.
+
+        Removing a `driver_internal_info` dict value via this method
+        ensures that this field will be flagged for saving.
+
+        :param key: Key of item to pop off the `driver_internal_info` dict
+        :param default_value: Value to return if the key doesn't exist
+        :returns: The removed value, or `default_value`
+        """
+        if key in self.driver_internal_info:
+            self._changed_fields.add('driver_internal_info')
+            return self.driver_internal_info.pop(key, default_value)
+        return default_value
+
+    def timestamp_driver_internal_info(self, key):
+        """Set a `driver_internal_info` value with the current timestamp.
+
+        Setting a `driver_internal_info` timestamp value via this method
+        ensures that this field will be flagged for saving.
+
+        :param key: Key of item to set the timestamp on
+        """
+        self.set_driver_internal_info(key, timeutils.utcnow().isoformat())
 
 
 @base.IronicObjectRegistry.register

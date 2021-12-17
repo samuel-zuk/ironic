@@ -72,12 +72,11 @@ from ironic.conductor import utils
 from ironic.conductor import verify
 from ironic.conf import CONF
 from ironic.drivers import base as drivers_base
+from ironic.drivers.modules import deploy_utils
 from ironic.drivers.modules import image_cache
 from ironic import objects
 from ironic.objects import base as objects_base
 from ironic.objects import fields
-
-MANAGER_TOPIC = 'ironic.conductor_manager'
 
 LOG = log.getLogger(__name__)
 
@@ -1095,12 +1094,10 @@ class ConductorManager(base_manager.BaseConductorManager):
             node.instance_info = {}
             node.instance_uuid = None
             utils.wipe_deploy_internal_info(task)
-            driver_internal_info = node.driver_internal_info
-            driver_internal_info.pop('instance', None)
-            driver_internal_info.pop('root_uuid_or_disk_id', None)
-            driver_internal_info.pop('is_whole_disk_image', None)
-            driver_internal_info.pop('deploy_boot_mode', None)
-            node.driver_internal_info = driver_internal_info
+            node.del_driver_internal_info('instance')
+            node.del_driver_internal_info('root_uuid_or_disk_id')
+            node.del_driver_internal_info('is_whole_disk_image')
+            node.del_driver_internal_info('deploy_boot_mode')
             network.remove_vifs_from_node(task)
             node.save()
             if node.allocation_id:
@@ -1206,10 +1203,6 @@ class ConductorManager(base_manager.BaseConductorManager):
         with task_manager.acquire(context, node_id, shared=False, patient=True,
                                   purpose='continue node cleaning') as task:
             node = task.node
-            if node.target_provision_state == states.MANAGEABLE:
-                target_state = states.MANAGEABLE
-            else:
-                target_state = None
 
             if node.provision_state != states.CLEANWAIT:
                 raise exception.InvalidStateRequested(_(
@@ -1219,7 +1212,7 @@ class ConductorManager(base_manager.BaseConductorManager):
                      'state': node.provision_state,
                      'clean_state': states.CLEANWAIT})
 
-            task.process_event('resume', target_state=target_state)
+            task.resume_cleaning()
 
             task.set_spawn_error_hook(utils.spawn_cleaning_error_handler,
                                       task.node)
@@ -1512,9 +1505,10 @@ class ConductorManager(base_manager.BaseConductorManager):
         conditions are met:
 
         1) Node is mapped to this conductor.
-        2) Node is in maintenance with maintenance type of power failure.
-        3) Node is not reserved.
-        4) Node is not in the ENROLL state.
+        2) Node is in maintenance.
+        3) Node's fault field is set to 'power failure'.
+        4) Node is not reserved.
+        5) Node is not in the ENROLL state.
         """
         def handle_recovery(task, actual_power_state):
             """Handle recovery when power sync is succeeded."""
@@ -1719,13 +1713,13 @@ class ConductorManager(base_manager.BaseConductorManager):
             # supplied.
             iwdi = images.is_whole_disk_image(task.context,
                                               task.node.instance_info)
-            driver_internal_info = node.driver_internal_info
-            driver_internal_info['is_whole_disk_image'] = iwdi
-            node.driver_internal_info = driver_internal_info
-            # Calling boot validate to ensure that sufficient information
-            # is supplied to allow the node to be able to boot if takeover
-            # writes items such as kernel/ramdisk data to disk.
-            task.driver.boot.validate(task)
+            if iwdi is not None:
+                node.set_driver_internal_info('is_whole_disk_image', iwdi)
+            if deploy_utils.get_boot_option(node) != 'local':
+                # Calling boot validate to ensure that sufficient information
+                # is supplied to allow the node to be able to boot if takeover
+                # writes items such as kernel/ramdisk data to disk.
+                task.driver.boot.validate(task)
             # NOTE(TheJulia): While task.driver.boot.validate() is called
             # above, and task.driver.power.validate() could be called, it
             # is called as part of the transition from ENROLL to MANAGEABLE
@@ -1770,10 +1764,7 @@ class ConductorManager(base_manager.BaseConductorManager):
             # NOTE(kaifeng) Clear allocated_ipmi_terminal_port if exists,
             # so current conductor can allocate a new free port from local
             # resources.
-            internal_info = task.node.driver_internal_info
-            if 'allocated_ipmi_terminal_port' in internal_info:
-                internal_info.pop('allocated_ipmi_terminal_port')
-                task.node.driver_internal_info = internal_info
+            task.node.del_driver_internal_info('allocated_ipmi_terminal_port')
             try:
                 task.driver.console.start_console(task)
             except Exception as err:
@@ -1905,7 +1896,7 @@ class ConductorManager(base_manager.BaseConductorManager):
             # node instance for the current validations.
             iwdi = images.is_whole_disk_image(context,
                                               task.node.instance_info)
-            task.node.driver_internal_info['is_whole_disk_image'] = iwdi
+            task.node.set_driver_internal_info('is_whole_disk_image', iwdi)
             for iface_name in task.driver.non_vendor_interfaces:
                 iface = getattr(task.driver, iface_name)
                 result = reason = None
@@ -3499,7 +3490,7 @@ class ConductorManager(base_manager.BaseConductorManager):
                 # unusable value that can't be verified against.
                 # This is important if the agent lookup has occured with
                 # pre-generation of tokens with virtual media usage.
-                node.driver_internal_info['agent_secret_token'] = "******"
+                node.set_driver_internal_info('agent_secret_token', "******")
                 return node
             task.upgrade_lock()
             LOG.debug('Generating agent token for node %(node)s',

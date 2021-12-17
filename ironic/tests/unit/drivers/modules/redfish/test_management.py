@@ -263,7 +263,7 @@ class RedfishManagementTestCase(db_base.DbTestCase):
 
             task.node.refresh()
             self.assertEqual(
-                sushy.BOOT_SOURCE_TARGET_PXE,
+                boot_devices.PXE,
                 task.node.driver_internal_info['redfish_boot_device'])
 
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
@@ -305,7 +305,7 @@ class RedfishManagementTestCase(db_base.DbTestCase):
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=False) as task:
             task.node.driver_internal_info['redfish_boot_device'] = (
-                sushy.BOOT_SOURCE_TARGET_HDD
+                boot_devices.DISK
             )
 
             task.driver.management.restore_boot_device(task, fake_system)
@@ -315,7 +315,24 @@ class RedfishManagementTestCase(db_base.DbTestCase):
                 enabled=sushy.BOOT_SOURCE_ENABLED_ONCE)
             # The stored boot device is kept intact
             self.assertEqual(
+                boot_devices.DISK,
+                task.node.driver_internal_info['redfish_boot_device'])
+
+    def test_restore_boot_device_compat(self):
+        fake_system = mock.Mock()
+        with task_manager.acquire(self.context, self.node.uuid,
+                                  shared=False) as task:
+            # Previously we used sushy constants
+            task.node.driver_internal_info['redfish_boot_device'] = "hdd"
+
+            task.driver.management.restore_boot_device(task, fake_system)
+
+            fake_system.set_system_boot_options.assert_called_once_with(
                 sushy.BOOT_SOURCE_TARGET_HDD,
+                enabled=sushy.BOOT_SOURCE_ENABLED_ONCE)
+            # The stored boot device is kept intact
+            self.assertEqual(
+                "hdd",
                 task.node.driver_internal_info['redfish_boot_device'])
 
     def test_restore_boot_device_noop(self):
@@ -335,7 +352,7 @@ class RedfishManagementTestCase(db_base.DbTestCase):
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=False) as task:
             task.node.driver_internal_info['redfish_boot_device'] = (
-                sushy.BOOT_SOURCE_TARGET_HDD
+                boot_devices.DISK
             )
 
             task.driver.management.restore_boot_device(task, fake_system)
@@ -346,7 +363,7 @@ class RedfishManagementTestCase(db_base.DbTestCase):
             self.assertTrue(mock_log.called)
             # The stored boot device is kept intact
             self.assertEqual(
-                sushy.BOOT_SOURCE_TARGET_HDD,
+                boot_devices.DISK,
                 task.node.driver_internal_info['redfish_boot_device'])
 
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
@@ -394,7 +411,7 @@ class RedfishManagementTestCase(db_base.DbTestCase):
 
                 # Asserts
                 fake_system.set_system_boot_options.assert_called_once_with(
-                    mode=mode)
+                    mode=expected)
                 mock_get_system.assert_called_once_with(task.node)
 
                 # Reset mocks
@@ -419,7 +436,7 @@ class RedfishManagementTestCase(db_base.DbTestCase):
                 exception.RedfishError, 'Setting boot mode',
                 task.driver.management.set_boot_mode, task, boot_modes.UEFI)
             fake_system.set_system_boot_options.assert_called_once_with(
-                mode=boot_modes.UEFI)
+                mode=sushy.BOOT_SOURCE_MODE_UEFI)
             mock_get_system.assert_called_once_with(task.node)
 
     @mock.patch.object(sushy, 'Sushy', autospec=True)
@@ -440,7 +457,7 @@ class RedfishManagementTestCase(db_base.DbTestCase):
                 'does not support set_boot_mode',
                 task.driver.management.set_boot_mode, task, boot_modes.UEFI)
             fake_system.set_system_boot_options.assert_called_once_with(
-                mode=boot_modes.UEFI)
+                mode=sushy.BOOT_SOURCE_MODE_UEFI)
             mock_get_system.assert_called_once_with(task.node)
 
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
@@ -813,7 +830,7 @@ class RedfishManagementTestCase(db_base.DbTestCase):
                              build_mock):
         build_mock.return_value = {'a': 'b'}
         mock_task_monitor = mock.Mock()
-        mock_task_monitor.task_monitor = '/task/123'
+        mock_task_monitor.task_monitor_uri = '/task/123'
         mock_update_service = mock.Mock()
         mock_update_service.simple_update.return_value = mock_task_monitor
         mock_get_update_service.return_value = mock_update_service
@@ -1187,7 +1204,7 @@ class RedfishManagementTestCase(db_base.DbTestCase):
                                                      mock_node_power_action,
                                                      mock_log):
         mock_task_monitor = mock.Mock()
-        mock_task_monitor.task_monitor = '/task/987'
+        mock_task_monitor.task_monitor_uri = '/task/987'
         mock_update_service = mock.Mock()
         mock_update_service.simple_update.return_value = mock_task_monitor
         driver_internal_info = {
@@ -1362,13 +1379,11 @@ class RedfishManagementTestCase(db_base.DbTestCase):
 
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
     def test_get_mac_addresses_success(self, mock_get_system):
-        expected_properties = {'00:11:22:33:44:55': 'enabled'}
-
         self.init_system_mock(mock_get_system.return_value)
 
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=True) as task:
-            self.assertEqual(expected_properties,
+            self.assertEqual(['00:11:22:33:44:55'],
                              task.driver.management.get_mac_addresses(task))
 
     @mock.patch.object(redfish_utils, 'get_system', autospec=True)
@@ -1378,4 +1393,5 @@ class RedfishManagementTestCase(db_base.DbTestCase):
         system_mock.ethernet_interfaces.summary = None
         with task_manager.acquire(self.context, self.node.uuid,
                                   shared=True) as task:
-            self.assertIsNone(task.driver.management.get_mac_addresses(task))
+            self.assertEqual([],
+                             task.driver.management.get_mac_addresses(task))

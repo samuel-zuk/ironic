@@ -971,6 +971,7 @@ class DeployingErrorHandlerTestCase(db_base.DbTestCase):
         self.node.provision_state = states.DEPLOYING
         self.node.last_error = None
         self.node.deploy_step = None
+        self.node.driver_info = {}
         self.node.driver_internal_info = {}
         self.node.id = obj_utils.create_test_node(self.context,
                                                   driver='fake-hardware').id
@@ -991,12 +992,11 @@ class DeployingErrorHandlerTestCase(db_base.DbTestCase):
                           self.task)
 
     def test_deploying_error_handler(self):
-        info = self.node.driver_internal_info
-        info['deploy_step_index'] = 2
-        info['deployment_reboot'] = True
-        info['deployment_polling'] = True
-        info['skip_current_deploy_step'] = True
-        info['agent_url'] = 'url'
+        self.node.set_driver_internal_info('deploy_step_index', 2)
+        self.node.set_driver_internal_info('deployment_reboot', True)
+        self.node.set_driver_internal_info('deployment_polling', True)
+        self.node.set_driver_internal_info('skip_current_deploy_step', True)
+        self.node.set_driver_internal_info('agent_url', 'url')
         conductor_utils.deploying_error_handler(self.task, self.logmsg,
                                                 self.errmsg)
 
@@ -1128,9 +1128,8 @@ class ErrorHandlersTestCase(db_base.DbTestCase):
         clean_error = ("Timeout reached while cleaning the node. Please "
                        "check if the ramdisk responsible for the cleaning is "
                        "running on the node. Failed on step {'key': 'val'}.")
-        self.node.driver_internal_info = {
-            'cleaning_reboot': True,
-            'clean_step_index': 0}
+        self.node.set_driver_internal_info('cleaning_reboot', True)
+        self.node.set_driver_internal_info('clean_step_index', 0)
         conductor_utils.cleanup_cleanwait_timeout(self.task)
         self.assertEqual({}, self.node.clean_step)
         self.assertNotIn('clean_step_index', self.node.driver_internal_info)
@@ -1146,12 +1145,12 @@ class ErrorHandlersTestCase(db_base.DbTestCase):
         target = 'baz'
         self.node.target_provision_state = target
         self.node.clean_step = {'key': 'val'}
-        self.node.driver_internal_info = {
-            'cleaning_reboot': True,
-            'cleaning_polling': True,
-            'skip_current_clean_step': True,
-            'clean_step_index': 0,
-            'agent_url': 'url'}
+        self.node.set_driver_internal_info('cleaning_reboot', True)
+        self.node.set_driver_internal_info('cleaning_polling', True)
+        self.node.set_driver_internal_info('skip_current_clean_step', True)
+        self.node.set_driver_internal_info('clean_step_index', 0)
+        self.node.set_driver_internal_info('agent_url', 'url')
+
         msg = 'error bar'
         last_error = "last error"
         conductor_utils.cleaning_error_handler(self.task, msg,
@@ -1982,6 +1981,37 @@ class FastTrackTestCase(db_base.DbTestCase):
         with task_manager.acquire(
                 self.context, self.node.uuid, shared=False) as task:
             self.assertTrue(conductor_utils.is_fast_track(task))
+
+    def test_is_fast_track_via_driver_info(self, mock_get_power):
+        self.config(fast_track=False, group='deploy')
+        mock_get_power.return_value = states.POWER_ON
+        with task_manager.acquire(
+                self.context, self.node.uuid, shared=False) as task:
+            task.node.driver_info['fast_track'] = True
+            self.assertTrue(conductor_utils.is_fast_track(task))
+
+    def test_is_fast_track_via_driver_info_string(self, mock_get_power):
+        self.config(fast_track=False, group='deploy')
+        mock_get_power.return_value = states.POWER_ON
+        with task_manager.acquire(
+                self.context, self.node.uuid, shared=False) as task:
+            task.node.driver_info['fast_track'] = 'yes'
+            self.assertTrue(conductor_utils.is_fast_track(task))
+
+    def test_is_fast_track_disabled_in_driver_info(self, mock_get_power):
+        mock_get_power.return_value = states.POWER_ON
+        with task_manager.acquire(
+                self.context, self.node.uuid, shared=False) as task:
+            task.node.driver_info['fast_track'] = False
+            self.assertFalse(conductor_utils.is_fast_track(task))
+
+    def test_is_fast_track_disabled_in_driver_info_string(self,
+                                                          mock_get_power):
+        mock_get_power.return_value = states.POWER_ON
+        with task_manager.acquire(
+                self.context, self.node.uuid, shared=False) as task:
+            task.node.driver_info['fast_track'] = 'false'
+            self.assertFalse(conductor_utils.is_fast_track(task))
 
     def test_is_fast_track_config_false(self, mock_get_power):
         self.config(fast_track=False, group='deploy')

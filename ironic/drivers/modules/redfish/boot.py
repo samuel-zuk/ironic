@@ -278,7 +278,7 @@ def _has_vmedia_device(managers, boot_device, inserted=None):
         inserted status.
     :return: The device that could be found or False.
     """
-    if isinstance(boot_device, str):
+    if not isinstance(boot_device, list):
         boot_device = [boot_device]
 
     for dev in boot_device:
@@ -417,7 +417,7 @@ class RedfishVirtualMediaBoot(base.BootInterface):
                 _("The %(iface)s boot interface is not suitable for node "
                   "%(node)s with vendor %(vendor)s, use "
                   "idrac-redfish-virtual-media instead")
-                % {'iface': task.node.boot_interface,
+                % {'iface': task.node.get_interface('boot'),
                    'node': task.node.uuid, 'vendor': vendor})
 
     def validate(self, task):

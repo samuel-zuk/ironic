@@ -38,7 +38,7 @@ class RPCService(service.Service):
         self.host = host
         manager_module = importutils.try_import(manager_module)
         manager_class = getattr(manager_module, manager_class)
-        self.manager = manager_class(host, manager_module.MANAGER_TOPIC)
+        self.manager = manager_class(host, rpc.MANAGER_TOPIC)
         self.topic = self.manager.topic
         self.rpcserver = None
         self.deregister = True
@@ -53,18 +53,22 @@ class RPCService(service.Service):
         if CONF.rpc_transport == 'json-rpc':
             self.rpcserver = json_rpc.WSGIService(
                 self.manager, serializer, context.RequestContext.from_dict)
-        else:
+        elif CONF.rpc_transport != 'none':
             target = messaging.Target(topic=self.topic, server=self.host)
             endpoints = [self.manager]
             self.rpcserver = rpc.get_server(target, endpoints, serializer)
-        self.rpcserver.start()
+
+        if self.rpcserver is not None:
+            self.rpcserver.start()
 
         self.handle_signal()
         self.manager.init_host(admin_context)
+        rpc.set_global_manager(self.manager)
 
-        LOG.info('Created RPC server for service %(service)s on host '
-                 '%(host)s.',
-                 {'service': self.topic, 'host': self.host})
+        LOG.info('Created RPC server with %(transport)s transport for service '
+                 '%(service)s on host %(host)s.',
+                 {'service': self.topic, 'host': self.host,
+                  'transport': CONF.rpc_transport})
 
     def stop(self):
         try:
@@ -84,6 +88,7 @@ class RPCService(service.Service):
         LOG.info('Stopped RPC server for service %(service)s on host '
                  '%(host)s.',
                  {'service': self.topic, 'host': self.host})
+        rpc.set_global_manager(None)
 
     def _handle_signal(self, signo, frame):
         LOG.info('Got signal SIGUSR1. Not deregistering on next shutdown '

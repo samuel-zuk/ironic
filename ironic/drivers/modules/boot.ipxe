@@ -11,12 +11,22 @@ echo Attempting to boot from MAC ${net${netid}/mac:hexhyp}
 chain {{ ipxe_for_mac_uri }}${net${netid}/mac:hexhyp} || goto loop
 
 :loop_done
+{% if ipxe_fallback_script -%}
+chain {{ ipxe_fallback_script }} | goto boot_failed
+
+:boot_failed
+{% endif -%}
 echo PXE boot failed! No configuration found for any of the present NICs.
 echo Press any key to reboot...
 prompt --timeout 180
 reboot
 
 :old_rom
+{% if ipxe_fallback_script -%}
+chain {{ ipxe_fallback_script }} | goto boot_failed_old_rom
+
+:boot_failed_old_rom
+{% endif -%}
 echo PXE boot failed! No configuration found for NIC ${mac:hexhyp}.
 echo Please update your iPXE ROM and retry.
 echo Press any key to reboot...

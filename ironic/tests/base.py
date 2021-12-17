@@ -43,6 +43,7 @@ from ironic.common import config as ironic_config
 from ironic.common import context as ironic_context
 from ironic.common import driver_factory
 from ironic.common import hash_ring
+from ironic.common import rpc
 from ironic.common import utils as common_utils
 from ironic.conf import CONF
 from ironic.drivers import base as drivers_base
@@ -117,6 +118,8 @@ class TestCase(oslo_test_base.BaseTestCase):
         for factory in driver_factory._INTERFACE_LOADERS.values():
             factory._extension_manager = None
 
+        rpc.set_global_manager(None)
+
         # Ban running external processes via 'execute' like functions. If the
         # patched function is called, an exception is raised to warn the
         # tester.
@@ -149,6 +152,7 @@ class TestCase(oslo_test_base.BaseTestCase):
                     group='neutron')
         self.config(enabled_hardware_types=['fake-hardware',
                                             'manual-management'])
+        self.config(initial_grub_template=None, group='pxe')
         for iface in drivers_base.ALL_INTERFACES:
             default = None
 

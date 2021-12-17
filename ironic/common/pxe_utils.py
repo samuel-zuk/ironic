@@ -65,13 +65,16 @@ KERNEL_RAMDISK_LABELS = {'deploy': DEPLOY_KERNEL_RAMDISK_LABELS,
                          'rescue': RESCUE_KERNEL_RAMDISK_LABELS}
 
 
-def get_root_dir():
-    """Returns the directory where the config files and images will live."""
-    return CONF.pxe.tftp_root
+def _get_root_dir(ipxe_enabled):
+    if ipxe_enabled:
+        return CONF.deploy.http_root
+    else:
+        return CONF.pxe.tftp_root
 
 
-def get_ipxe_root_dir():
-    return CONF.deploy.http_root
+def ensure_tree(path):
+    mode = CONF.pxe.dir_permission or 0o755
+    os.makedirs(path, mode=mode, exist_ok=True)
 
 
 def _ensure_config_dirs_exist(task, ipxe_enabled=False):
@@ -81,10 +84,7 @@ def _ensure_config_dirs_exist(task, ipxe_enabled=False):
     :param ipxe_enabled: Default false boolean to indicate if ipxe
                          is in use by the caller.
     """
-    if ipxe_enabled:
-        root_dir = get_ipxe_root_dir()
-    else:
-        root_dir = get_root_dir()
+    root_dir = _get_root_dir(ipxe_enabled)
     node_dir = os.path.join(root_dir, task.node.uuid)
     pxe_dir = os.path.join(root_dir, PXE_CFG_DIR_NAME)
     # NOTE: We should only change the permissions if the folder
@@ -93,9 +93,7 @@ def _ensure_config_dirs_exist(task, ipxe_enabled=False):
     # which may not recurse downward.
     for directory in (node_dir, pxe_dir):
         if not os.path.isdir(directory):
-            fileutils.ensure_tree(directory)
-            if CONF.pxe.dir_permission:
-                os.chmod(directory, CONF.pxe.dir_permission)
+            ensure_tree(directory)
 
 
 def _link_mac_pxe_configs(task, ipxe_enabled=False):
@@ -164,7 +162,7 @@ def _link_ip_address_pxe_configs(task, ipxe_enabled=False):
 
 
 def _get_pxe_grub_mac_path(mac, ipxe_enabled=False):
-    root_dir = get_ipxe_root_dir() if ipxe_enabled else get_root_dir()
+    root_dir = _get_root_dir(ipxe_enabled)
     yield os.path.join(root_dir, "%s-%s-%s" %
                        ("grub.cfg", "01", mac.replace(':', "-").lower()))
     yield os.path.join(root_dir, mac + '.conf')
@@ -189,9 +187,9 @@ def _get_pxe_mac_path(mac, delimiter='-', client_id=None,
         if client_id:
             hw_type = '20-'
         mac_file_name = hw_type + mac_file_name
-        return os.path.join(get_root_dir(), PXE_CFG_DIR_NAME,
+        return os.path.join(CONF.pxe.tftp_root, PXE_CFG_DIR_NAME,
                             mac_file_name)
-    return os.path.join(get_ipxe_root_dir(), PXE_CFG_DIR_NAME,
+    return os.path.join(CONF.deploy.http_root, PXE_CFG_DIR_NAME,
                         mac_file_name)
 
 
@@ -226,10 +224,7 @@ def get_kernel_ramdisk_info(node_uuid, driver_info, mode='deploy',
 
     Note: driver_info should be validated outside of this method.
     """
-    if ipxe_enabled:
-        root_dir = get_ipxe_root_dir()
-    else:
-        root_dir = get_root_dir()
+    root_dir = _get_root_dir(ipxe_enabled)
     image_info = {}
     labels = KERNEL_RAMDISK_LABELS[mode]
     for label in labels:
@@ -249,10 +244,7 @@ def get_pxe_config_file_path(node_uuid, ipxe_enabled=False):
     :returns: The path to the node's PXE configuration file.
 
     """
-    if ipxe_enabled:
-        return os.path.join(get_ipxe_root_dir(), node_uuid, 'config')
-    else:
-        return os.path.join(get_root_dir(), node_uuid, 'config')
+    return os.path.join(_get_root_dir(ipxe_enabled), node_uuid, 'config')
 
 
 def get_file_path_from_label(node_uuid, root_dir, label):
@@ -269,11 +261,12 @@ def get_file_path_from_label(node_uuid, root_dir, label):
     :param label: Name of the image
     """
     if label == 'ks_template':
-        return os.path.join(get_ipxe_root_dir(), node_uuid, 'ks.cfg.template')
+        return os.path.join(CONF.deploy.http_root, node_uuid,
+                            'ks.cfg.template')
     elif label == 'ks_cfg':
-        return os.path.join(get_ipxe_root_dir(), node_uuid, 'ks.cfg')
+        return os.path.join(CONF.deploy.http_root, node_uuid, 'ks.cfg')
     elif label == 'stage2':
-        return os.path.join(get_ipxe_root_dir(), node_uuid, 'LiveOS',
+        return os.path.join(CONF.deploy.http_root, node_uuid, 'LiveOS',
                             'squashfs.img')
     else:
         return os.path.join(root_dir, node_uuid, label)
@@ -356,7 +349,8 @@ def create_pxe_config(task, pxe_options, template=None, ipxe_enabled=False):
               'DISK_IDENTIFIER': pxe_config_disk_ident}
 
     pxe_config = utils.render_template(template, params)
-    utils.write_to_file(pxe_config_file_path, pxe_config)
+    utils.write_to_file(pxe_config_file_path, pxe_config,
+                        CONF.pxe.file_permission)
 
     # Always write the mac addresses
     _link_mac_pxe_configs(task, ipxe_enabled=ipxe_enabled)
@@ -379,7 +373,8 @@ def create_ipxe_boot_script():
     """Render the iPXE boot script into the HTTP root directory"""
     boot_script = utils.render_template(
         CONF.pxe.ipxe_boot_script,
-        {'ipxe_for_mac_uri': PXE_CFG_DIR_NAME + '/'})
+        {'ipxe_for_mac_uri': PXE_CFG_DIR_NAME + '/',
+         'ipxe_fallback_script': CONF.pxe.ipxe_fallback_script})
     bootfile_path = os.path.join(
         CONF.deploy.http_root,
         os.path.basename(CONF.pxe.ipxe_boot_script))
@@ -388,7 +383,8 @@ def create_ipxe_boot_script():
     # which should be rather rare
     if (not os.path.isfile(bootfile_path)
             or not utils.file_has_content(bootfile_path, boot_script)):
-        utils.write_to_file(bootfile_path, boot_script)
+        utils.write_to_file(bootfile_path, boot_script,
+                            CONF.pxe.file_permission)
 
 
 def clean_up_pxe_config(task, ipxe_enabled=False):
@@ -426,12 +422,8 @@ def clean_up_pxe_config(task, ipxe_enabled=False):
         for path in _get_pxe_grub_mac_path(port.address,
                                            ipxe_enabled=ipxe_enabled):
             ironic_utils.unlink_without_raise(path)
-    if ipxe_enabled:
-        utils.rmtree_without_raise(os.path.join(get_ipxe_root_dir(),
-                                                task.node.uuid))
-    else:
-        utils.rmtree_without_raise(os.path.join(get_root_dir(),
-                                                task.node.uuid))
+    utils.rmtree_without_raise(os.path.join(_get_root_dir(ipxe_enabled),
+                                            task.node.uuid))
 
 
 def _dhcp_option_file_or_url(task, urlboot=False, ip_version=None):
@@ -567,9 +559,11 @@ def dhcp_options_for_instance(task, ipxe_enabled=False, url_boot=False,
         # from it's own path, but Petitboot needs it to be specified by this
         # option since it doesn't use pxelinux.0 loader.
         if not url_boot:
+            # Enforce trailing slash
+            prefix = os.path.join(CONF.pxe.tftp_root, '')
             dhcp_opts.append(
                 {'opt_name': DHCP_TFTP_PATH_PREFIX,
-                 'opt_value': get_tftp_path_prefix()})
+                 'opt_value': prefix})
 
     if not url_boot:
         dhcp_opts.append({'opt_name': DHCP_TFTP_SERVER_NAME,
@@ -598,23 +592,6 @@ def dhcp_options_for_instance(task, ipxe_enabled=False, url_boot=False,
         opt.update({'ip_version': use_ip_version})
 
     return dhcp_opts
-
-
-def get_tftp_path_prefix():
-    """Adds trailing slash (if needed) necessary for path-prefix
-
-    :return: CONF.pxe.tftp_root ensured to have a trailing slash
-    """
-    return os.path.join(CONF.pxe.tftp_root, '')
-
-
-def get_path_relative_to_tftp_root(file_path):
-    """Return file relative path to CONF.pxe.tftp_root
-
-    :param file_path: full file path to be made relative path.
-    :returns: The path relative to CONF.pxe.tftp_root
-    """
-    return os.path.relpath(file_path, get_tftp_path_prefix())
 
 
 def is_ipxe_enabled(task):
@@ -681,10 +658,7 @@ def get_instance_image_info(task, ipxe_enabled=False):
     if (node.driver_internal_info.get('is_whole_disk_image')
             or deploy_utils.get_boot_option(node) == 'local'):
         return image_info
-    if ipxe_enabled:
-        root_dir = get_ipxe_root_dir()
-    else:
-        root_dir = get_root_dir()
+    root_dir = _get_root_dir(ipxe_enabled)
     i_info = node.instance_info
     if i_info.get('boot_iso'):
         image_info['boot_iso'] = (
@@ -782,8 +756,8 @@ def build_deploy_pxe_options(task, pxe_info, mode='deploy',
                 pxe_opts[option] = '/'.join([CONF.deploy.http_url, node.uuid,
                                             label])
         else:
-            pxe_opts[option] = get_path_relative_to_tftp_root(
-                pxe_info[label][1])
+            pxe_opts[option] = os.path.relpath(pxe_info[label][1],
+                                               CONF.pxe.tftp_root)
     if ipxe_enabled:
         pxe_opts['initrd_filename'] = ramdisk_label
     return pxe_opts
@@ -811,8 +785,8 @@ def build_instance_pxe_options(task, pxe_info, ipxe_enabled=False):
                 # image_source to determine if it's a whole disk image or not.
                 # For example, when transitioning to 'available' state
                 # for first time from 'manage' state.
-                pxe_opts[option] = get_path_relative_to_tftp_root(
-                    pxe_info[label][1])
+                pxe_opts[option] = os.path.relpath(pxe_info[label][1],
+                                                   CONF.pxe.tftp_root)
 
     pxe_opts.setdefault('aki_path', 'no_kernel')
     pxe_opts.setdefault('ari_path', 'no_ramdisk')
@@ -942,14 +916,6 @@ def build_service_pxe_config(task, instance_image_info,
         ipxe_enabled=ipxe_enabled, anaconda_boot=anaconda_boot)
 
 
-def _build_heartbeat_url(node_uuid):
-
-    api_version = 'v1'
-    heartbeat_api = '%s/heartbeat/{node_uuid}' % api_version
-    path = heartbeat_api.format(node_uuid=node_uuid)
-    return "/".join([deploy_utils.get_ironic_api_url(), path])
-
-
 def build_kickstart_config_options(task):
     """Build the kickstart template options for a node
 
@@ -969,7 +935,12 @@ def build_kickstart_config_options(task):
     node.save()
     params['liveimg_url'] = node.instance_info['image_url']
     params['agent_token'] = node.driver_internal_info['agent_secret_token']
-    params['heartbeat_url'] = _build_heartbeat_url(node.uuid)
+
+    heartbeat_url = '%s/v1/heartbeat/%s' % (
+        deploy_utils.get_ironic_api_url().rstrip('/'),
+        node.uuid
+    )
+    params['heartbeat_url'] = heartbeat_url
     return {'ks_options': params}
 
 
@@ -1200,7 +1171,8 @@ def prepare_instance_kickstart_config(task, image_info, anaconda_boot=False):
     ks_config_drive = ks_utils.prepare_config_drive(task)
     if ks_config_drive:
         ks_cfg = ks_cfg + ks_config_drive
-    utils.write_to_file(image_info['ks_cfg'][1], ks_cfg)
+    utils.write_to_file(image_info['ks_cfg'][1], ks_cfg,
+                        CONF.pxe.file_permission)
 
 
 @image_cache.cleanup(priority=25)
@@ -1221,18 +1193,18 @@ def cache_ramdisk_kernel(task, pxe_info, ipxe_enabled=False):
     node = task.node
     t_pxe_info = copy.copy(pxe_info)
     if ipxe_enabled:
-        path = os.path.join(get_ipxe_root_dir(), node.uuid)
+        path = os.path.join(CONF.deploy.http_root, node.uuid)
     else:
-        path = os.path.join(get_root_dir(), node.uuid)
-    fileutils.ensure_tree(path)
+        path = os.path.join(CONF.pxe.tftp_root, node.uuid)
+    ensure_tree(path)
     # anconda deploy will have 'stage2' as one of the labels in pxe_info dict
     if 'stage2' in pxe_info.keys():
         # stage2  will be stored in ipxe http directory. So make sure they
         # exist.
-        fileutils.ensure_tree(
+        ensure_tree(
             get_file_path_from_label(
                 node.uuid,
-                get_ipxe_root_dir(),
+                CONF.deploy.http_root,
                 'stage2'
             )
         )
@@ -1242,8 +1214,12 @@ def cache_ramdisk_kernel(task, pxe_info, ipxe_enabled=False):
 
     LOG.debug("Fetching necessary kernel and ramdisk for node %s",
               node.uuid)
-    deploy_utils.fetch_images(ctx, TFTPImageCache(), list(t_pxe_info.values()),
+    images_info = list(t_pxe_info.values())
+    deploy_utils.fetch_images(ctx, TFTPImageCache(), images_info,
                               CONF.force_raw_images)
+    if CONF.pxe.file_permission:
+        for info in images_info:
+            os.chmod(info[1], CONF.pxe.file_permission)
 
 
 def clean_up_pxe_env(task, images_info, ipxe_enabled=False):
@@ -1292,22 +1268,13 @@ def place_loaders_for_boot(base_path):
                 raise exception.IncorrectConfiguration(msg)
             else:
                 try:
-                    os.makedirs(
-                        os.path.join(base_path, head),
-                        mode=CONF.pxe.dir_permission or 0o755, exist_ok=True)
+                    ensure_tree(os.path.join(base_path, head))
                 except OSError as e:
                     msg = ('Failed to create supplied directories in '
                            'asset copy paths. Error: %s') % e
                     raise exception.IncorrectConfiguration(msg)
 
         full_dest = os.path.join(base_path, dest)
-        if not os.path.isfile(src):
-            msg = ('Was not able to find source path %(src)s '
-                   'to copy to %(dest)s.' %
-                   {'src': src, 'dest': full_dest})
-            LOG.error(msg)
-            raise exception.IncorrectConfiguration(error=msg)
-
         LOG.debug('Copying bootloader %(dest)s from %(src)s.',
                   {'src': src, 'dest': full_dest})
         try:
@@ -1320,3 +1287,25 @@ def place_loaders_for_boot(base_path):
                    'the requested destination. %s' % e)
             LOG.error(msg)
             raise exception.IncorrectConfiguration(error=msg)
+
+
+def place_common_config():
+    """Place template generated config which is not node specific.
+
+    Currently places the initial grub config for grub network boot.
+    """
+    if not CONF.pxe.initial_grub_template:
+        return
+
+    grub_dir_path = os.path.join(_get_root_dir(False), 'grub')
+    if not os.path.isdir(grub_dir_path):
+        fileutils.ensure_tree(grub_dir_path)
+        if CONF.pxe.dir_permission:
+            os.chmod(grub_dir_path, CONF.pxe.dir_permission)
+
+    initial_grub = utils.render_template(
+        CONF.pxe.initial_grub_template,
+        {'tftp_root': _get_root_dir(False)})
+    initial_grub_path = os.path.join(grub_dir_path, 'grub.cfg')
+
+    utils.write_to_file(initial_grub_path, initial_grub)

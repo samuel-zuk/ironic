@@ -29,7 +29,8 @@ LOG = log.getLogger(__name__)
 def initialize_wsgi_app(argv=sys.argv):
     i18n.install('ironic')
 
-    service.prepare_service(argv)
+    service.prepare_command(argv)
+    service.ensure_rpc_transport()
 
     LOG.debug("Configuration:")
     CONF.log_opt_values(LOG, log.DEBUG)

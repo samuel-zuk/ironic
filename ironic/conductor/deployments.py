@@ -91,9 +91,7 @@ def start_deploy(task, manager, configdrive=None, event='deploy',
     # NOTE(sirushtim): The iwdi variable can be None. It's up to
     # the deploy driver to validate this.
     iwdi = images.is_whole_disk_image(task.context, node.instance_info)
-    driver_internal_info = node.driver_internal_info
-    driver_internal_info['is_whole_disk_image'] = iwdi
-    node.driver_internal_info = driver_internal_info
+    node.set_driver_internal_info('is_whole_disk_image', iwdi)
     node.save()
 
     try:
@@ -187,9 +185,7 @@ def do_node_deploy(task, conductor_id=None, configdrive=None,
         # validated & processed later together with driver and deploy template
         # steps.
         if deploy_steps:
-            info = node.driver_internal_info
-            info['user_deploy_steps'] = deploy_steps
-            node.driver_internal_info = info
+            node.set_driver_internal_info('user_deploy_steps', deploy_steps)
             node.save()
         # This gets the deploy steps (if any) from driver, deploy template and
         # deploy_steps argument and updates them in the node's
@@ -256,15 +252,23 @@ def do_next_deploy_step(task, step_index):
         # Save which step we're about to start so we can restart
         # if necessary
         node.deploy_step = step
-        driver_internal_info = node.driver_internal_info
-        driver_internal_info['deploy_step_index'] = idx
-        node.driver_internal_info = driver_internal_info
+        node.set_driver_internal_info('deploy_step_index', idx)
         node.save()
         interface = getattr(task.driver, step.get('interface'))
         LOG.info('Executing %(step)s on node %(node)s',
                  {'step': step, 'node': node.uuid})
         try:
             result = interface.execute_deploy_step(task, step)
+        except exception.AgentInProgress as e:
+            LOG.info('Conductor attempted to process deploy step for '
+                     'node %(node)s. Agent indicated it is presently '
+                     'executing a command. Error: %(error)s',
+                     {'node': task.node.uuid,
+                      'error': e})
+            node.set_driver_internal_info('skip_current_deploy_step',
+                                          False)
+            task.process_event('wait')
+            return
         except exception.IronicException as e:
             if isinstance(e, exception.AgentConnectionFailed):
                 if task.node.driver_internal_info.get('deployment_reboot'):
@@ -272,27 +276,21 @@ def do_next_deploy_step(task, step_index):
                              'deployment reboot, waiting for agent to come up '
                              'to run next deploy step %(step)s.',
                              {'node': node.uuid, 'step': step})
-                    driver_internal_info['skip_current_deploy_step'] = False
-                    node.driver_internal_info = driver_internal_info
+                    node.set_driver_internal_info('skip_current_deploy_step',
+                                                  False)
                     task.process_event('wait')
                     return
-            if isinstance(e, exception.AgentInProgress):
-                LOG.info('Conductor attempted to process deploy step for '
-                         'node %(node)s. Agent indicated it is presently '
-                         'executing a command. Error: %(error)s',
-                         {'node': task.node.uuid,
-                          'error': e})
-                driver_internal_info['skip_current_deploy_step'] = False
-                node.driver_internal_info = driver_internal_info
-                task.process_event('wait')
-                return
-            log_msg = ('Node %(node)s failed deploy step %(step)s. Error: '
-                       '%(err)s' %
-                       {'node': node.uuid, 'step': node.deploy_step, 'err': e})
-            utils.deploying_error_handler(
-                task, log_msg,
-                _("Deploy step %(step)s failed: %(err)s.")
-                % {'step': conductor_steps.step_id(step), 'err': e})
+
+            # Avoid double handling of failures. For example, set_failed_state
+            # from deploy_utils already calls deploying_error_handler.
+            if task.node.provision_state != states.DEPLOYFAIL:
+                log_msg = ('Node %(node)s failed deploy step %(step)s. Error: '
+                           '%(err)s' % {'node': node.uuid,
+                                        'step': node.deploy_step, 'err': e})
+                utils.deploying_error_handler(
+                    task, log_msg,
+                    _("Deploy step %(step)s failed: %(err)s.")
+                    % {'step': conductor_steps.step_id(step), 'err': e})
             return
         except Exception as e:
             log_msg = ('Node %(node)s failed deploy step %(step)s with '
@@ -300,7 +298,10 @@ def do_next_deploy_step(task, step_index):
                        {'node': node.uuid, 'step': node.deploy_step, 'err': e})
             utils.deploying_error_handler(
                 task, log_msg,
-                _("Failed to deploy. Exception: %s") % e, traceback=True)
+                _("Deploy step %(step)s failed with %(exc)s: %(err)s.")
+                % {'step': conductor_steps.step_id(step), 'err': e,
+                   'exc': e.__class__.__name__},
+                traceback=True)
             return
 
         if task.node.provision_state == states.DEPLOYFAIL:
@@ -357,9 +358,7 @@ def validate_deploy_steps(task):
     conductor_steps.set_node_deployment_steps(
         task, reset_current=False)
 
-    info = task.node.driver_internal_info
-    info['steps_validated'] = True
-    task.node.driver_internal_info = info
+    task.node.set_driver_internal_info('steps_validated', True)
     task.node.save()
 
 

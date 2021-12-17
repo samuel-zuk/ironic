@@ -15,15 +15,29 @@
 # under the License.
 
 from oslo_log import log
+try:
+    from oslo_reports import guru_meditation_report as gmr
+    from oslo_reports import opts as gmr_opts
+except ImportError:
+    gmr = None
 from oslo_service import service
 
 from ironic.common import config
+from ironic.common import profiler
 from ironic.conf import CONF
 from ironic.conf import opts
 from ironic import objects
+from ironic import version
 
 
-def prepare_service(argv=None):
+LOG = log.getLogger(__name__)
+
+
+def prepare_command(argv=None):
+    """Prepare any Ironic command for execution.
+
+    Sets up configuration and logging, registers objects.
+    """
     argv = [] if argv is None else argv
     log.register_options(CONF)
     opts.update_opt_defaults()
@@ -35,5 +49,31 @@ def prepare_service(argv=None):
     objects.register_all()
 
 
+def prepare_service(name, argv=None, conf=CONF):
+    """Prepare an Ironic service executable.
+
+    In addition to what `prepare_command` does, set up guru meditation
+    reporting and profiling.
+    """
+    prepare_command(argv)
+
+    if gmr is not None:
+        gmr_opts.set_defaults(CONF)
+        gmr.TextGuruMeditation.setup_autorun(version, conf=CONF)
+    else:
+        LOG.debug('Guru meditation reporting is disabled '
+                  'because oslo.reports is not installed')
+
+    profiler.setup(name, CONF.host)
+
+
 def process_launcher():
     return service.ProcessLauncher(CONF, restart_method='mutate')
+
+
+def ensure_rpc_transport(conf=CONF):
+    # Only the combined ironic executable can use rpc_transport = none
+    if conf.rpc_transport == 'none':
+        raise RuntimeError("This service is not designed to work with "
+                           "rpc_transport = none. Please use the combined "
+                           "ironic executable or another RPC transport.")

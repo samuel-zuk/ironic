@@ -101,14 +101,15 @@ opts = [
                       "creating files that cannot be read by the TFTP server. "
                       "Setting to <None> will result in the operating "
                       "system's umask to be utilized for the creation of new "
-                      "tftp folders. It is required that an octal "
+                      "tftp folders. The system default umask is masked out "
+                      "on the specified value. It is required that an octal "
                       "representation is specified. For example: 0o755")),
     cfg.IntOpt('file_permission',
                default=0o644,
                help=_('The permission which is used on files created as part '
                       'of configuration and setup of file assets for PXE '
-                      'based operations. Defaults to a value of 0o644.'
-                      'This value must be specified as an octal '
+                      'based operations. Defaults to a value of '
+                      '0o644. This value must be specified as an octal '
                       'representation. For example: 0o644')),
     cfg.StrOpt('pxe_bootfile_name',
                default='pxelinux.0',
@@ -144,6 +145,10 @@ opts = [
                    '$pybasedir', 'drivers/modules/boot.ipxe'),
                help=_('On ironic-conductor node, the path to the main iPXE '
                       'script file.')),
+    cfg.StrOpt('ipxe_fallback_script',
+               help=_('File name (e.g. inspector.ipxe) of an iPXE script to '
+                      'fall back to when booting to a MAC-specific script '
+                      'fails. When not set, booting will fail in this case.')),
     cfg.IntOpt('ipxe_timeout',
                default=0,
                help=_('Timeout value (in seconds) for downloading an image '
@@ -199,6 +204,11 @@ opts = [
                    'for bootloaders. Use example: '
                    'ipxe.efi:/usr/share/ipxe/ipxe-snponly-x86_64.efi,'
                    'undionly.kpxe:/usr/share/ipxe/undionly.kpxe')),
+    cfg.StrOpt('initial_grub_template',
+               default=os.path.join(
+                   '$pybasedir', 'drivers/modules/initial_grub_cfg.template'),
+               help=_('On ironic-conductor node, the path to the initial grub'
+                      'configuration template for grub network boot.')),
 ]
 
 

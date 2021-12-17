@@ -122,7 +122,7 @@ def _tear_down_managed_boot(task):
         LOG.exception('Unable to remove inspection network for node %s',
                       task.node.uuid)
 
-    if CONF.inspector.power_off:
+    if CONF.inspector.power_off and not utils.fast_track_enabled(task.node):
         try:
             cond_utils.node_power_action(task, states.POWER_OFF)
         except Exception as exc:
@@ -153,7 +153,7 @@ def _ironic_manages_boot(task, raise_exc=False):
                   'not support managed boot for in-band inspection or '
                   'the required options are not populated: %(exc)s',
                   {'node': task.node.uuid,
-                   'iface': task.node.boot_interface,
+                   'iface': task.node.get_interface('boot'),
                    'exc': e})
         if raise_exc:
             raise
@@ -166,7 +166,7 @@ def _ironic_manages_boot(task, raise_exc=False):
                   'not support managed boot for in-band inspection or '
                   'the required options are not populated: %(exc)s',
                   {'node': task.node.uuid,
-                   'iface': task.node.network_interface,
+                   'iface': task.node.get_interface('network'),
                    'exc': e})
         if raise_exc:
             raise
@@ -195,7 +195,7 @@ def _start_managed_inspection(task):
         endpoint = _get_callback_endpoint(client)
         params = dict(_parse_kernel_params(),
                       **{'ipa-inspection-callback-url': endpoint})
-        if CONF.deploy.fast_track:
+        if utils.fast_track_enabled(task.node):
             params['ipa-api-url'] = deploy_utils.get_ironic_api_url()
 
         cond_utils.node_power_action(task, states.POWER_OFF)
@@ -246,8 +246,7 @@ class Inspector(base.InspectInterface):
         try:
             enabled_macs = task.driver.management.get_mac_addresses(task)
             if enabled_macs:
-                inspect_utils.create_ports_if_not_exist(
-                    task, enabled_macs, get_mac_address=lambda x: x[0])
+                inspect_utils.create_ports_if_not_exist(task, enabled_macs)
             else:
                 LOG.warning("Not attempting to create any port as no NICs "
                             "were discovered in 'enabled' state for node "
