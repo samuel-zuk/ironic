@@ -15,6 +15,7 @@ from unittest import mock
 from oslo_concurrency import processutils
 from oslo_config import cfg
 
+from ironic.api.app import VersionSelectorApplication as app
 from ironic.common import exception
 from ironic.common import wsgi_service
 from ironic.tests import base
@@ -27,7 +28,7 @@ class TestWSGIService(base.TestCase):
     @mock.patch.object(wsgi_service.wsgi, 'Server', autospec=True)
     def test_workers_set_default(self, mock_server):
         service_name = "ironic_api"
-        test_service = wsgi_service.WSGIService(service_name)
+        test_service = wsgi_service.WSGIService(service_name, app, "api")
         self.assertEqual(2, test_service.workers)
         mock_server.assert_called_once_with(CONF, service_name,
                                             test_service.app,
@@ -38,21 +39,21 @@ class TestWSGIService(base.TestCase):
     @mock.patch.object(wsgi_service.wsgi, 'Server', autospec=True)
     def test_workers_set_correct_setting(self, mock_server):
         self.config(api_workers=8, group='api')
-        test_service = wsgi_service.WSGIService("ironic_api")
+        test_service = wsgi_service.WSGIService("ironic_api", app, "api")
         self.assertEqual(8, test_service.workers)
 
     @mock.patch.object(processutils, 'get_worker_count', lambda: 3)
     @mock.patch.object(wsgi_service.wsgi, 'Server', autospec=True)
     def test_workers_set_zero_setting(self, mock_server):
         self.config(api_workers=0, group='api')
-        test_service = wsgi_service.WSGIService("ironic_api")
+        test_service = wsgi_service.WSGIService("ironic_api", app, "api")
         self.assertEqual(3, test_service.workers)
 
     @mock.patch.object(processutils, 'get_worker_count', lambda: 42)
     @mock.patch.object(wsgi_service.wsgi, 'Server', autospec=True)
     def test_workers_set_default_limit(self, mock_server):
         self.config(api_workers=0, group='api')
-        test_service = wsgi_service.WSGIService("ironic_api")
+        test_service = wsgi_service.WSGIService("ironic_api", app, "api")
         self.assertEqual(4, test_service.workers)
 
     @mock.patch.object(wsgi_service.wsgi, 'Server', autospec=True)
@@ -60,14 +61,16 @@ class TestWSGIService(base.TestCase):
         self.config(api_workers=-2, group='api')
         self.assertRaises(exception.ConfigInvalid,
                           wsgi_service.WSGIService,
-                          'ironic_api')
+                          'ironic_api',
+                          app,
+                          'api')
         self.assertFalse(mock_server.called)
 
     @mock.patch.object(wsgi_service.wsgi, 'Server', autospec=True)
     def test_wsgi_service_with_ssl_enabled(self, mock_server):
         self.config(enable_ssl_api=True, group='api')
         service_name = 'ironic_api'
-        srv = wsgi_service.WSGIService('ironic_api', CONF.api.enable_ssl_api)
+        srv = wsgi_service.WSGIService('ironic_api', app, "api")
         mock_server.assert_called_once_with(CONF, service_name,
                                             srv.app,
                                             host='0.0.0.0',
