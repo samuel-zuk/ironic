@@ -22,6 +22,7 @@ import sys
 from oslo_config import cfg
 from oslo_log import log
 
+from ironic.api.app import VersionSelectorApplication
 from ironic.common import service as ironic_service
 from ironic.common import wsgi_service
 
@@ -37,7 +38,9 @@ def main():
 
     # Build and start the WSGI app
     launcher = ironic_service.process_launcher()
-    server = wsgi_service.WSGIService('ironic_api', 'api')
+    server = wsgi_service.WSGIService('ironic_api',
+                                      VersionSelectorApplication,
+                                      'api')
     launcher.launch_service(server, workers=server.workers)
     launcher.wait()
 
