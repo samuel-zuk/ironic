@@ -9,7 +9,6 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations
 # under the License.
-
 from flask import Flask
 from ironic_lib import auth_basic
 from keystonemiddleware import auth_token
@@ -24,7 +23,7 @@ from ironic.redfish_proxy.hooks import rpcapi as RPCAPIHooks
 from ironic.redfish_proxy.middleware.auth_public_routes import AuthPublicRoutes
 
 
-def setup_app():
+def setup_app(testing=False):
     """Sets up the Ironic Redfish proxy, returns the underlying WSGI app."""
     app = Flask(__name__)
     app.config.update(CONF)
@@ -37,13 +36,14 @@ def setup_app():
 
     wsgi_middleware = None
     if app.config['auth_strategy'] == 'keystone':
-        wsgi_middleware = auth_token.AuthProtocol(app.wsgi_app, app.config)
-        # Only enable Sessions auth if keystone is in use.
+        wsgi_middleware = auth_token.AuthProtocol(app.wsgi_app,
+                                                  {'oslo_config_config': CONF})
+        # Only enable Sessions auth if Keystone is in use.
         app.register_blueprint(SessionService)
     elif app.config['auth_strategy'] == 'http_basic':
         wsgi_middleware = auth_basic.BasicAuthMiddleware(
             app.wsgi_app, app.config.http_basic_auth_user_file)
-    # If noauth is not specifically specified, abort initialization.
+    # If noauth is not explicitly specified, abort initialization.
     elif app.config['auth_strategy'] != 'noauth':
         raise Exception('A valid authentication strategy was not specified.')
 
@@ -68,7 +68,7 @@ def setup_app():
         ContextHooks.register()
         RPCAPIHooks.register()
 
-    return app.wsgi_app
+    return app.test_client() if testing else app.wsgi_app
 
 
 class RedfishProxyApplication(object):
