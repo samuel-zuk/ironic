@@ -13,21 +13,30 @@
 import gzip
 import pprint
 
+from ironic.conf import CONF
 from ironic.redfish_proxy.app import setup_app
 from ironic.tests import base
 
 
 class RedfishProxyTestCase(base.TestCase):
     """Test class for the Redfish proxy that provides an app instance."""
-    def setUp(self):
+    def setUp(self, defer_client_init=False):
         super(RedfishProxyTestCase, self).setUp()
         self._set_cfg_opts()
-        # Get the Flask testing client.
-        self.client = setup_app(testing=True)
+
+        # NOTE: this exists to allow individual test cases within a test class
+        # to change things before initializing the client. if this is set, each
+        # test within the class will need to manually call _init_client().
+        if not defer_client_init:
+            self._init_client()
 
     def _set_cfg_opts(self):
         """Helper function that sets config options before instantiation."""
-        pass
+        CONF.set_override('enabled', True, group='redfish_proxy') 
+   
+    def _init_client(self):
+        """Gets the Flask testing client."""
+        self.client = setup_app(testing=True)
 
     def _make_request(self, path, method='GET', headers=None, data=None,
                       environ_overrides={}, is_json=True):
@@ -56,7 +65,7 @@ class RedfishProxyTestCase(base.TestCase):
         for header in resp.headers:
             print('%s: %s' % header)
         # If response specifies gzip content encoding, decode the body
-        if 'gzip' in resp.content_encoding:
+        if resp.content_encoding and 'gzip' in resp.content_encoding:
             resp.set_data(gzip.decompress(resp.data))
         # Pretty print JSON if possible
         if resp.is_json:

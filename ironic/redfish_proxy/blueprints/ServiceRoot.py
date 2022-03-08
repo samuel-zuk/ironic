@@ -10,6 +10,8 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import xml.etree.ElementTree as ET
+
 from flask import Blueprint
 from flask import current_app
 from flask import jsonify
@@ -102,6 +104,17 @@ def metadata_document():
     """
     with open('ironic/redfish_proxy/schema.xml', 'r') as doc_file:
         doc_str = doc_file.read()
+
+    # Remove references to Sessions if not using Keystone
+    if current_app.config['auth_strategy'] != 'keystone':
+        xml_root = ET.fromstring(doc_str)
+        ns = {'edmx': 'http://docs.oasis-open.org/odata/ns/edmx'}
+        for ref in xml_root.findall('./edmx:Reference', ns):
+            if ref.attrib['Uri'].find('Session') != -1:
+                xml_root.remove(ref)
+        ET.register_namespace('edmx', 'http://docs.oasis-open.org/odata/ns/edmx')
+        ET.register_namespace('edm', 'http://docs.oasis-open.org/odata/ns/edm')
+        doc_str = ET.tostring(xml_root)
 
     response = make_response(doc_str, 200)
     response.headers['Content-Type'] = 'application/xml'

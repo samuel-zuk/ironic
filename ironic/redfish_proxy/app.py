@@ -9,6 +9,7 @@
 # WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 # License for the specific language governing permissions and limitations
 # under the License.
+
 from flask import Flask
 from ironic_lib import auth_basic
 from keystonemiddleware import auth_token
@@ -19,12 +20,16 @@ from ironic.redfish_proxy.blueprints.ServiceRoot import ServiceRoot
 from ironic.redfish_proxy.blueprints.SessionService import SessionService
 from ironic.redfish_proxy.blueprints.Systems import Systems
 from ironic.redfish_proxy.hooks import context as ContextHooks
+from ironic.redfish_proxy.hooks import error as ErrorHooks
 from ironic.redfish_proxy.hooks import rpcapi as RPCAPIHooks
 from ironic.redfish_proxy.middleware.auth_public_routes import AuthPublicRoutes
 
 
 def setup_app(testing=False):
     """Sets up the Ironic Redfish proxy, returns the underlying WSGI app."""
+    if not CONF.redfish_proxy.enabled:
+        raise RuntimeError('The Ironic Redfish proxy service is currently '
+                           'disabled and must be enabled in ironic.conf.')
     app = Flask(__name__)
     app.config.update(CONF)
     # (e.g. requests to /endpoint/ and /endpoint should resolve identitcally)
@@ -67,6 +72,7 @@ def setup_app(testing=False):
     with app.app_context():
         ContextHooks.register()
         RPCAPIHooks.register()
+        ErrorHooks.register()
 
     return app.test_client() if testing else app.wsgi_app
 

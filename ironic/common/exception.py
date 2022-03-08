@@ -835,3 +835,11 @@ class IncorrectConfiguration(IronicException):
 
 class NodeVerifyFailure(IronicException):
     _msg_fmt = _("Failed to verify node %(node)s: %(reason)s")
+
+
+class SessionNotFound(NotFound):
+    _msg_fmt = _("Session with id %(sess_id)s could not be found.")
+
+
+class MissingCredential(Invalid):
+    _msg_fmt = _('Required field "%(field_name)s" absent from request.')

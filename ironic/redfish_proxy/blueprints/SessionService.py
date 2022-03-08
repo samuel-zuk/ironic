@@ -22,6 +22,8 @@ from keystoneauth1.identity import v3
 from keystoneauth1 import session
 from keystoneauth1 import token_endpoint
 
+from ironic.common import exception
+
 
 SessionService = Blueprint('SessionService', __name__)
 
@@ -101,7 +103,7 @@ def session_auth():
     # Ensure that both required fields are present.
     for field in ('UserName', 'Password'):
         if field not in body.keys():
-            abort(400)
+            raise exception.MissingCredential(field_name=field)
 
     # Use the provided credentials to attempt to fetch a new token.
     auth = v3.application_credential.ApplicationCredential(
@@ -153,7 +155,7 @@ def session_info(sess_id):
     app_cred_id = token_info['token']['application_credential']['id']
 
     if token_id != sess_id:
-        abort(404)
+        raise exception.SessionNotFound(sess_id=sess_id)
 
     return jsonify({
         '@odata.id': '/redfish/v1/SessionService/Sessions/%s' % token_id,
@@ -185,7 +187,7 @@ def end_session(sess_id):
     token_id = token_info['token']['audit_ids'][0]
 
     if token_id != sess_id:
-        abort(404)
+        raise exception.SessionNotFound(sess_id=sess_id)
 
     req = sess.delete(auth_url + '/auth/tokens',
                       headers={'X-Subject-Token': auth_token})
