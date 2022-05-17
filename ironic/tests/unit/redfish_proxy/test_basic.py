@@ -88,7 +88,7 @@ class RedfishProxyConfigTests(base.RedfishProxyTestCase):
 
     def setUp(self):
         super(RedfishProxyConfigTests, self).setUp(defer_client_init=True)
-    
+
     def test_proxy_disabled(self):
         """Tests that the app fails to initialize itself if disabled."""
         CONF.set_override('enabled', False, group='redfish_proxy')
@@ -101,7 +101,7 @@ class RedfishProxyConfigTests(base.RedfishProxyTestCase):
 
         resp = self.http_get('/redfish/v1/')
         self.assertEqual(resp.status_code, 200)
-        
+
         resp_body = resp.get_json()
         self.assertEqual(resp_body['Links']['Sessions']['@odata.id'],
                          '/redfish/v1/SessionService/Sessions')
@@ -134,7 +134,6 @@ class RedfishProxyConfigTests(base.RedfishProxyTestCase):
             self.assertIn({'kind': 'Singleton', 'name': name, 'url': url},
                           resp_body['value'])
 
-
     def test_odata_doc_no_keystone(self):
         """Validates OData doc endpoint response when not using Keystone."""
         CONF.set_override('auth_strategy', 'noauth')
@@ -148,6 +147,31 @@ class RedfishProxyConfigTests(base.RedfishProxyTestCase):
             self.assertNotEqual(value['name'], 'SessionService')
             self.assertNotEqual(value['name'], 'Sessions')
 
+    def test_metadata_doc_keystone(self):
+        """Validates metadata doc endpoint response using Keystone."""
+        CONF.set_override('auth_strategy', 'keystone')
+        self._init_client()
+
+        resp = self.http_get('/redfish/v1/$metadata')
+        self.assertEqual(resp.status_code, 200)
+
+        root = ET.fromstring(resp.data)
+        ns = {'edmx': 'http://docs.oasis-open.org/odata/ns/edmx'}
+        refs = [x.attrib['Uri'] for x in root.findall('./edmx:Reference', ns)]
+
+        present = ('ServiceRoot',
+                   'ComputerSystem',
+                   'ComputerSystemCollection',
+                   'Session',
+                   'SessionCollection',
+                   'SessionService')
+
+        # Create a regex string that matches the given ref names
+        re_present = '.*({s}).*'.format(s='|'.join(present))
+
+        expected_refs = tuple(filter(lambda x: match(re_present, x), refs))
+        self.assertEqual(len(expected_refs), len(present))
+
     def test_metadata_doc_no_keystone(self):
         """Validates metadata doc endpoint response when not using Keystone."""
         CONF.set_override('auth_strategy', 'noauth')
@@ -160,11 +184,18 @@ class RedfishProxyConfigTests(base.RedfishProxyTestCase):
         ns = {'edmx': 'http://docs.oasis-open.org/odata/ns/edmx'}
         refs = [x.attrib['Uri'] for x in root.findall('./edmx:Reference', ns)]
 
-        expected = '.*(ServiceRoot|ComputerSystem|ComputerSystemCollection).*'
-        unexpected = '.*(Session|SessionCollection|SessionService).*'
+        present = ('ServiceRoot',
+                   'ComputerSystem',
+                   'ComputerSystemCollection')
+        absent = ('Session',
+                  'SessionCollection',
+                  'SessionService')
 
-        expected_refs = tuple(filter(lambda x : match(expected, x), refs))
-        unexpected_refs = tuple(filter(lambda x : match(unexpected, x), refs))
+        # Create a regex string that matches the given ref names
+        re_present = '.*({s}).*'.format(s='|'.join(present))
+        re_absent = '.*({s}).*'.format(s='|'.join(absent))
 
-        self.assertEqual(len(expected_refs), 3)
+        expected_refs = tuple(filter(lambda x: match(re_present, x), refs))
+        unexpected_refs = tuple(filter(lambda x: match(re_absent, x), refs))
+        self.assertEqual(len(expected_refs), len(present))
         self.assertEqual(unexpected_refs, ())

@@ -112,8 +112,10 @@ def metadata_document():
         for ref in xml_root.findall('./edmx:Reference', ns):
             if ref.attrib['Uri'].find('Session') != -1:
                 xml_root.remove(ref)
-        ET.register_namespace('edmx', 'http://docs.oasis-open.org/odata/ns/edmx')
-        ET.register_namespace('edm', 'http://docs.oasis-open.org/odata/ns/edm')
+        ET.register_namespace('edmx',
+                              'http://docs.oasis-open.org/odata/ns/edmx')
+        ET.register_namespace('edm',
+                              'http://docs.oasis-open.org/odata/ns/edm')
         doc_str = ET.tostring(xml_root)
 
     response = make_response(doc_str, 200)

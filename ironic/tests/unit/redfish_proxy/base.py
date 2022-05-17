@@ -32,8 +32,8 @@ class RedfishProxyTestCase(base.TestCase):
 
     def _set_cfg_opts(self):
         """Helper function that sets config options before instantiation."""
-        CONF.set_override('enabled', True, group='redfish_proxy') 
-   
+        CONF.set_override('enabled', True, group='redfish_proxy')
+
     def _init_client(self):
         """Gets the Flask testing client."""
         self.client = setup_app(testing=True)
