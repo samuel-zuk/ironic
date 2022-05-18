@@ -10,6 +10,7 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import keystoneauth1.exceptions as ks_exceptions
 from oslo_config import cfg
 
 from ironic.conf import CONF
@@ -31,22 +32,22 @@ class FakeKeystoneClientSession(object):
         elif auth.__class__.__name__ == 'Token':
             self.token = auth.token
 
-    def get_token(self, *args, **kwargs):
-        # We assume if get_token is called, the session was initialized with
-        # an ApplicationCredential as the auth parameter.
+    def get_auth_headers(self, *args, **kwargs):
+        # We assume if get_auth_headers is called, the session was initialized
+        # with an ApplicationCredential as the auth parameter.
         if self.app_cred_id != FAKE_CREDS['APP_CRED_ID']:
-            raise Exception('Unauthorized')
+            raise ks_exceptions.http.NotFound()
         if self.app_cred_secret != FAKE_CREDS['APP_CRED_SECRET']:
-            raise Exception('Unauthorized')
+            raise ks_exceptions.http.Unauthorized()
 
-        return FAKE_CREDS['TOKEN']
+        return {'X-Auth-Token': FAKE_CREDS['TOKEN']}
 
     def get(self, url, headers={}, *args, **kwargs):
         # We assume if get gis being called, we are using a session token.
         if '/auth/tokens' not in url:
-            return self.FakeResponse()
+            raise ks_exceptions.http.NotFound()
         if headers['X-Subject-Token'] != FAKE_CREDS['TOKEN']:
-            raise Exception('Unauthorized')
+            raise ks_exceptions.http.Unauthorized()
 
         # The info the SessionService expects to receive.
         resp = {
@@ -60,9 +61,9 @@ class FakeKeystoneClientSession(object):
     def delete(self, url, headers={}, *args, **kwargs):
         # We assume if get gis being called, we are using a session token.
         if '/auth/tokens' not in url:
-            return self.FakeResponse()
+            raise ks_exceptions.http.NotFound()
         if headers['X-Subject-Token'] != FAKE_CREDS['TOKEN']:
-            raise Exception('Unauthorized')
+            raise ks_exceptions.http.Unauthorized()
 
         return self.FakeResponse(status_code=204)
 

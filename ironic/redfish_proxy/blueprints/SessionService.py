@@ -10,14 +10,13 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-import json
-
 from flask import abort
 from flask import Blueprint
 from flask import current_app
 from flask import jsonify
 from flask import make_response
 from flask import request
+import keystoneauth1.exceptions as ks_exceptions
 from keystoneauth1.identity import v3
 from keystoneauth1 import session
 from keystoneauth1 import token_endpoint
@@ -57,13 +56,20 @@ def session_collection_info():
     to be used shall be the Keystone token's audit ID.
     """
     auth_url = current_app.config['keystone_authtoken']['auth_url']
-    auth_token = request.headers['X-Auth-Token']
+    try:
+        auth_token = request.headers['X-Auth-Token']
+    except KeyError:
+        abort(403)
 
     # Query the identity service to get the token's audit ID.
     auth = token_endpoint.Token(endpoint=auth_url, token=auth_token)
     sess = session.Session(auth=auth)
-    token_info = sess.get(auth_url + '/auth/tokens',
-                          headers={'X-Subject-Token': auth_token}).json()
+    try:
+        token_info = sess.get(auth_url + '/auth/tokens',
+                              headers={'X-Subject-Token': auth_token}).json()
+    except (ks_exceptions.auth.AuthorizationFailure,
+            ks_exceptions.http.Unauthorized):
+        abort(403)
     token_id = token_info['token']['audit_ids'][0]
 
     return jsonify({
@@ -90,17 +96,15 @@ def session_auth():
     body = {}
     auth_url = current_app.config['keystone_authtoken']['auth_url']
 
-    # Check if the POST request body is json; if not, attempt to jsonify it.
+    # Check if the POST request body is json.
     if request.is_json:
         body = request.get_json()
     else:
-        try:
-            body = json.loads(
-                list(request.form.to_dict().keys())[0])
-        except json.JSONDecodeError:
-            abort(400)
+        abort(400)
 
     # Ensure that both required fields are present.
+    if not body:
+        abort(400)
     for field in ('UserName', 'Password'):
         if field not in body.keys():
             raise exception.MissingCredential(field_name=field)
@@ -112,7 +116,12 @@ def session_auth():
         application_credential_secret=body['Password']
     )
     sess = session.Session(auth=auth)
-    auth_token = sess.get_token()
+    try:
+        auth_token = sess.get_auth_headers()['X-Auth-Token']
+    except (ks_exceptions.auth.AuthorizationFailure,
+            ks_exceptions.http.Unauthorized,
+            ks_exceptions.http.NotFound):
+        abort(403)
 
     # Query the Identity service to get the audit ID of the new token.
     token_info = sess.get(auth_url + '/auth/tokens',
@@ -145,14 +154,21 @@ def session_info(sess_id):
     required.
     """
     auth_url = current_app.config['keystone_authtoken']['auth_url']
-    auth_token = request.headers['X-Auth-Token']
+    try:
+        auth_token = request.headers['X-Auth-Token']
+    except KeyError:
+        abort(403)
 
     # Query the identity service to get the token's audit ID, check to make
     # sure that it matches with the session id in the URL.
     auth = token_endpoint.Token(endpoint=auth_url, token=auth_token)
     sess = session.Session(auth=auth)
-    token_info = sess.get(auth_url + '/auth/tokens',
-                          headers={'X-Subject-Token': auth_token}).json()
+    try:
+        token_info = sess.get(auth_url + '/auth/tokens',
+                              headers={'X-Subject-Token': auth_token}).json()
+    except (ks_exceptions.auth.AuthorizationFailure,
+            ks_exceptions.http.Unauthorized):
+        abort(403)
 
     token_id = token_info['token']['audit_ids'][0]
     app_cred_id = token_info['token']['application_credential']['id']
@@ -179,14 +195,21 @@ def end_session(sess_id):
     previously created using said credential.
     """
     auth_url = current_app.config['keystone_authtoken']['auth_url']
-    auth_token = request.headers['X-Auth-Token']
+    try:
+        auth_token = request.headers['X-Auth-Token']
+    except KeyError:
+        abort(403)
 
     # Query the identity service to get the token's audit ID, check to make
     # sure that it matches with the session id in the URL.
     auth = token_endpoint.Token(endpoint=auth_url, token=auth_token)
     sess = session.Session(auth=auth)
-    token_info = sess.get(auth_url + '/auth/tokens',
-                          headers={'X-Subject-Token': auth_token}).json()
+    try:
+        token_info = sess.get(auth_url + '/auth/tokens',
+                              headers={'X-Subject-Token': auth_token}).json()
+    except (ks_exceptions.auth.AuthorizationFailure,
+            ks_exceptions.http.Unauthorized):
+        abort(403)
     token_id = token_info['token']['audit_ids'][0]
 
     if token_id != sess_id:
