@@ -119,6 +119,7 @@ def session_auth():
                           headers={'X-Subject-Token': auth_token}).json()
     token_id = token_info['token']['audit_ids'][0]
 
+    # Note: Flask response syntax here = (response, status, headers)
     return (
         jsonify({
             '@odata.type': '#Session.1.0.0.Session',
@@ -127,10 +128,12 @@ def session_auth():
             'Name': 'User Session %s' % token_id,
             'UserName': body['UserName']
         }),
+        201,
         {
             'Location': '/redfish/v1/SessionService/Sessions/%s' % token_id,
             'X-Auth-Token': auth_token
-        })
+        }
+    )
 
 
 @SessionService.get('/redfish/v1/SessionService/Sessions/<sess_id>')

@@ -44,23 +44,32 @@ class FakeKeystoneClientSession(object):
     def get(self, url, headers={}, *args, **kwargs):
         # We assume if get gis being called, we are using a session token.
         if '/auth/tokens' not in url:
-            return self.FakeResponse({})
+            return self.FakeResponse()
         if headers['X-Subject-Token'] != FAKE_CREDS['TOKEN']:
             raise Exception('Unauthorized')
 
         # The info the SessionService expects to receive.
         resp = {
             'token': {
-                'audit_ids': FAKE_CREDS['TOKEN_ID'],
+                'audit_ids': [FAKE_CREDS['TOKEN_ID']],
                 'application_credential': {'id': FAKE_CREDS['APP_CRED_ID']}
             }
         }
         return self.FakeResponse(resp)
 
-    # Exists because .json() is called on Responses and that breaks dicts
+    def delete(self, url, headers={}, *args, **kwargs):
+        # We assume if get gis being called, we are using a session token.
+        if '/auth/tokens' not in url:
+            return self.FakeResponse()
+        if headers['X-Subject-Token'] != FAKE_CREDS['TOKEN']:
+            raise Exception('Unauthorized')
+
+        return self.FakeResponse(status_code=204)
+
     class FakeResponse(object):
-        def __init__(self, data):
+        def __init__(self, data={}, status_code=200):
             self.data = data
+            self.status_code = status_code
 
         def json(self):
             return self.data

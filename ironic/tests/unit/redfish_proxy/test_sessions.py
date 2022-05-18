@@ -23,14 +23,14 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
     def setUp(self):
         # Patch the keystone middleware and keystone Session objects
         # to return dummy values
-        patch1 = patch('keystonemiddleware.auth_token.AuthProtocol',
-                       utils.FakeKeystoneMiddleware)
-        patch1.start()
-        patch2 = patch('keystoneauth1.session.Session',
-                       utils.FakeKeystoneClientSession)
-        patch2.start()
-        self.addCleanup(patch1.stop)
-        self.addCleanup(patch2.stop)
+        mw_patch = patch('keystonemiddleware.auth_token.AuthProtocol',
+                         utils.FakeKeystoneMiddleware)
+        self.fake_middleware = mw_patch.start()
+        sess_patch = patch('keystoneauth1.session.Session',
+                           utils.FakeKeystoneClientSession)
+        self.fake_session = sess_patch.start()
+        self.addCleanup(mw_patch.stop)
+        self.addCleanup(sess_patch.stop)
         super(RedfishProxySessionTests, self).setUp()
 
     def _set_cfg_opts(self):
@@ -45,7 +45,7 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
         resp_body = resp.get_json()
         self.assertIsNotNone(resp_body)
         for x in ('Name', 'Id', 'SessionTimeout', 'Status', 'Sessions'):
-            self.assertIn(x, resp_body.keys())
+            self.assertIsNotNone(resp_body[x])
         self.assertEqual(resp_body['@odata.type'],
                          '#SessionService.v1_0_0.SessionService')
         self.assertEqual(resp_body['@odata.id'], '/redfish/v1/SessionService')
@@ -54,3 +54,69 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
         self.assertTrue(resp_body['ServiceEnabled'])
         self.assertEqual(resp_body['Sessions']['@odata.id'],
                          '/redfish/v1/SessionService/Sessions')
+
+    def test_get_sessions(self):
+        resp = self.http_get('/redfish/v1/SessionService/Sessions',
+                             headers={'X-Auth-Token': FAKE_CREDS['TOKEN']})
+        self.assertEqual(resp.status_code, 200)
+
+        resp_body = resp.get_json()
+        self.assertIsNotNone(resp_body)
+        self.assertIsNotNone(resp_body['Name'])
+        self.assertEqual(resp_body['@odata.type'],
+                         '#SessionCollection.SessionCollection')
+        self.assertEqual(resp_body['@odata.id'],
+                         '/redfish/v1/SessionService/Sessions')
+        self.assertGreater(resp_body['Members@odata.count'], 0)
+        self.assertEqual(resp_body['Members@odata.count'],
+                         len(resp_body['Members']))
+        self.assertIn({'@odata.id': '/redfish/v1/SessionService/Sessions/%s' %
+                                    FAKE_CREDS['TOKEN_ID']},
+                      resp_body['Members'])
+
+    def test_authentication(self):
+        auth = {'UserName': FAKE_CREDS['APP_CRED_ID'],
+                'Password': FAKE_CREDS['APP_CRED_SECRET']}
+        resp = self.http_post('/redfish/v1/SessionService/Sessions', data=auth)
+        self.assertEqual(resp.status_code, 201)
+
+        resp_body = resp.get_json()
+        resp_headers = resp.headers
+        for x in (resp_body, resp_headers):
+            self.assertIsNotNone(x)
+        self.assertIsNotNone(resp_body['Name'])
+        self.assertEqual(resp_headers['X-Auth-Token'], FAKE_CREDS['TOKEN'])
+        self.assertEqual(resp_headers['Location'],
+                         '/redfish/v1/SessionService/Sessions/%s' %
+                         FAKE_CREDS['TOKEN_ID'])
+        self.assertEqual(resp_headers['Location'], resp_body['@odata.id'])
+        self.assertEqual(resp_body['@odata.type'], '#Session.1.0.0.Session')
+        self.assertEqual(resp_body['Id'], FAKE_CREDS['TOKEN_ID'])
+        self.assertEqual(resp_body['UserName'], FAKE_CREDS['APP_CRED_ID'])
+
+    def test_get_current_session(self):
+        resp = self.http_get('/redfish/v1/SessionService/Sessions/%s' %
+                             FAKE_CREDS['TOKEN_ID'],
+                             headers={'X-Auth-Token': FAKE_CREDS['TOKEN']})
+        self.assertEqual(resp.status_code, 200)
+
+        resp_body = resp.get_json()
+        self.assertIsNotNone(resp_body)
+        self.assertIsNotNone(resp_body['Name'])
+        self.assertEqual(resp_body['@odata.id'],
+                         '/redfish/v1/SessionService/Sessions/%s' %
+                         FAKE_CREDS['TOKEN_ID'])
+        self.assertEqual(resp_body['@odata.type'], '#Session.1.0.0.Session')
+        self.assertEqual(resp_body['Id'], FAKE_CREDS['TOKEN_ID'])
+        self.assertEqual(resp_body['UserName'], FAKE_CREDS['APP_CRED_ID'])
+
+    def test_delete_current_sesison(self):
+        auth = {'UserName': FAKE_CREDS['APP_CRED_ID'],
+                'Password': FAKE_CREDS['APP_CRED_SECRET']}
+        resp = self.http_post('/redfish/v1/SessionService/Sessions', data=auth)
+        self.assertEqual(resp.status_code, 201)
+        location = resp.headers['Location']
+
+        resp = self.http_delete(location,
+                                headers={'X-Auth-Token': FAKE_CREDS['TOKEN']})
+        self.assertEqual(resp.status_code, 204)
