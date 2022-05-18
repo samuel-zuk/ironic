@@ -24,10 +24,10 @@ import shutil
 import time
 
 from ironic_lib import disk_utils
-from ironic_lib import utils as ironic_utils
 from oslo_concurrency import processutils
 from oslo_log import log as logging
 from oslo_utils import fileutils
+import pycdlib
 
 from ironic.common import exception
 from ironic.common.glance_service import service_utils as glance_utils
@@ -73,14 +73,6 @@ def _create_root_fs(root_directory, files_info):
             shutil.copyfile(src_file, target_file)
 
 
-def _umount_without_raise(mount_dir):
-    """Helper method to umount without raise."""
-    try:
-        utils.umount(mount_dir)
-    except processutils.ProcessExecutionError:
-        pass
-
-
 def create_vfat_image(output_file, files_info=None, parameters=None,
                       parameters_file='parameters.txt', fs_size_kib=100):
     """Creates the fat fs image on the desired file.
@@ -107,8 +99,9 @@ def create_vfat_image(output_file, files_info=None, parameters=None,
              mounting, creating filesystem, copying files, etc.
     """
     try:
-        ironic_utils.dd('/dev/zero', output_file, 'count=1',
-                        "bs=%dKiB" % fs_size_kib)
+        # TODO(sbaker): use ironic_lib.utils.dd when rootwrap has been removed
+        utils.execute('dd', 'if=/dev/zero', 'of=%s' % output_file, 'count=1',
+                      'bs=%dKiB' % fs_size_kib)
     except processutils.ProcessExecutionError as e:
         raise exception.ImageCreationFailed(image_type='vfat', error=e)
 
@@ -118,8 +111,10 @@ def create_vfat_image(output_file, files_info=None, parameters=None,
             # The label helps ramdisks to find the partition containing
             # the parameters (by using /dev/disk/by-label/ir-vfd-dev).
             # NOTE: FAT filesystem label can be up to 11 characters long.
-            ironic_utils.mkfs('vfat', output_file, label="ir-vfd-dev")
-            utils.mount(output_file, tmpdir, '-o', 'umask=0')
+            # TODO(sbaker): use ironic_lib.utils.mkfs when rootwrap has been
+            #              removed
+            utils.execute('mkfs', '-t', 'vfat', '-n',
+                          'ir-vfd-dev', output_file)
         except processutils.ProcessExecutionError as e:
             raise exception.ImageCreationFailed(image_type='vfat', error=e)
 
@@ -134,15 +129,20 @@ def create_vfat_image(output_file, files_info=None, parameters=None,
                 file_contents = '\n'.join(params_list)
                 utils.write_to_file(parameters_file, file_contents)
 
+            file_list = os.listdir(tmpdir)
+
+            if not file_list:
+                return
+
+            file_list = [os.path.join(tmpdir, item) for item in file_list]
+
+            # use mtools to copy the files into the image in a single
+            # operation
+            utils.execute('mcopy', '-s', *file_list, '-i', output_file, '::')
+
         except Exception as e:
             LOG.exception("vfat image creation failed. Error: %s", e)
             raise exception.ImageCreationFailed(image_type='vfat', error=e)
-
-        finally:
-            try:
-                utils.umount(tmpdir)
-            except processutils.ProcessExecutionError as e:
-                raise exception.ImageCreationFailed(image_type='vfat', error=e)
 
 
 def _generate_cfg(kernel_params, template, options):
@@ -292,7 +292,7 @@ def create_esp_image_for_uefi(
             # directory.
             if deploy_iso and not esp_image:
                 uefi_path_info, e_img_rel_path, grub_rel_path = (
-                    _mount_deploy_iso(deploy_iso, mountdir))
+                    _get_deploy_iso_files(deploy_iso, mountdir))
 
                 grub_cfg = os.path.join(tmpdir, grub_rel_path)
 
@@ -329,7 +329,7 @@ def create_esp_image_for_uefi(
 
             finally:
                 if deploy_iso:
-                    _umount_without_raise(mountdir)
+                    shutil.rmtree(mountdir)
 
         # Generate and copy grub config file.
         grub_conf = _generate_cfg(kernel_params,
@@ -570,6 +570,11 @@ def create_boot_iso(context, output_filename, kernel_href,
                 kernel_params=params, inject_files=inject_files)
 
 
+IMAGE_TYPE_PARTITION = 'partition'
+IMAGE_TYPE_WHOLE_DISK = 'whole-disk'
+VALID_IMAGE_TYPES = frozenset((IMAGE_TYPE_PARTITION, IMAGE_TYPE_WHOLE_DISK))
+
+
 def is_whole_disk_image(ctx, instance_info):
     """Find out if the image is a partition image or a whole disk image.
 
@@ -583,12 +588,22 @@ def is_whole_disk_image(ctx, instance_info):
     if not image_source:
         return
 
+    image_type = instance_info.get('image_type')
+    if image_type:
+        # This logic reflects the fact that whole disk images are the default
+        return image_type != IMAGE_TYPE_PARTITION
+
     is_whole_disk_image = False
     if glance_utils.is_glance_image(image_source):
         try:
             iproperties = get_image_properties(ctx, image_source)
         except Exception:
             return
+
+        image_type = iproperties.get('img_type')
+        if image_type:
+            return image_type != IMAGE_TYPE_PARTITION
+
         is_whole_disk_image = (not iproperties.get('kernel_id')
                                and not iproperties.get('ramdisk_id'))
     else:
@@ -600,7 +615,27 @@ def is_whole_disk_image(ctx, instance_info):
     return is_whole_disk_image
 
 
-def _mount_deploy_iso(deploy_iso, mountdir):
+def _extract_iso(extract_iso, extract_dir):
+    # NOTE(rpittau): we could probably just extract the files we need
+    # if we find them. Also we probably need to detect the correct iso
+    # type (UDF, RR, JOLIET).
+    iso = pycdlib.PyCdlib()
+    iso.open(extract_iso)
+
+    for dirname, dirlist, filelist in iso.walk(iso_path='/'):
+        dir_path = dirname.lstrip('/')
+        for dir_iso in dirlist:
+            os.makedirs(os.path.join(extract_dir, dir_path, dir_iso))
+        for file in filelist:
+            file_path = os.path.join(extract_dir, dirname, file)
+            iso.get_file_from_iso(
+                os.path.join(extract_dir, dir_path, file),
+                iso_path=file_path)
+
+    iso.close()
+
+
+def _get_deploy_iso_files(deploy_iso, mountdir):
     """This function opens up the deploy iso used for deploy.
 
     :param deploy_iso: path to the deploy iso where its
@@ -619,9 +654,9 @@ def _mount_deploy_iso(deploy_iso, mountdir):
     grub_path = None
 
     try:
-        utils.mount(deploy_iso, mountdir, '-o', 'loop')
-    except processutils.ProcessExecutionError as e:
-        LOG.exception("mounting the deploy iso failed.")
+        _extract_iso(deploy_iso, mountdir)
+    except Exception as e:
+        LOG.exception("extracting the deploy iso failed.")
         raise exception.ImageCreationFailed(image_type='iso', error=e)
 
     try:
@@ -636,14 +671,14 @@ def _mount_deploy_iso(deploy_iso, mountdir):
                                                 mountdir)
     except (OSError, IOError) as e:
         LOG.exception("examining the deploy iso failed.")
-        _umount_without_raise(mountdir)
+        shutil.rmtree(mountdir)
         raise exception.ImageCreationFailed(image_type='iso', error=e)
 
     # check if the variables are assigned some values or not during
     # walk of the mountdir.
     if not (e_img_path and e_img_rel_path and grub_path and grub_rel_path):
         error = (_("Deploy iso didn't contain efiboot.img or grub.cfg"))
-        _umount_without_raise(mountdir)
+        shutil.rmtree(mountdir)
         raise exception.ImageCreationFailed(image_type='iso', error=error)
 
     uefi_path_info = {e_img_path: e_img_rel_path,

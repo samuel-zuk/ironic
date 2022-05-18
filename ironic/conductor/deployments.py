@@ -22,7 +22,6 @@ from oslo_utils import excutils
 from ironic.common import exception
 from ironic.common.glance_service import service_utils as glance_utils
 from ironic.common.i18n import _
-from ironic.common import images
 from ironic.common import states
 from ironic.common import swift
 from ironic.conductor import notification_utils as notify_utils
@@ -88,11 +87,8 @@ def start_deploy(task, manager, configdrive=None, event='deploy',
     # Infer the image type to make sure the deploy driver
     # validates only the necessary variables for different
     # image types.
-    # NOTE(sirushtim): The iwdi variable can be None. It's up to
-    # the deploy driver to validate this.
-    iwdi = images.is_whole_disk_image(task.context, node.instance_info)
-    node.set_driver_internal_info('is_whole_disk_image', iwdi)
-    node.save()
+    if utils.update_image_type(task.context, task.node):
+        node.save()
 
     try:
         task.driver.power.validate(task)
@@ -103,7 +99,7 @@ def start_deploy(task, manager, configdrive=None, event='deploy',
     except exception.InvalidParameterValue as e:
         raise exception.InstanceDeployFailure(
             _("Failed to validate deploy or power info for node "
-              "%(node_uuid)s. Error: %(msg)s") %
+              "%(node_uuid)s: %(msg)s") %
             {'node_uuid': node.uuid, 'msg': e}, code=e.code)
 
     try:
@@ -135,8 +131,7 @@ def do_node_deploy(task, conductor_id=None, configdrive=None,
                 task,
                 ('Error while uploading the configdrive for %(node)s '
                  'to Swift') % {'node': node.uuid},
-                _('Failed to upload the configdrive to Swift. '
-                  'Error: %s') % e,
+                _('Failed to upload the configdrive to Swift: %s') % e,
                 clean_up=False)
     except db_exception.DBDataError as e:
         with excutils.save_and_reraise_exception():
@@ -197,7 +192,7 @@ def do_node_deploy(task, conductor_id=None, configdrive=None,
             utils.deploying_error_handler(
                 task,
                 'Error while getting deploy steps; cannot deploy to node '
-                '%(node)s. Error: %(err)s' % {'node': node.uuid, 'err': e},
+                '%(node)s: %(err)s' % {'node': node.uuid, 'err': e},
                 _("Cannot get deploy steps; failed to deploy: %s") % e)
 
     if not node.driver_internal_info.get('deploy_steps'):
@@ -284,7 +279,7 @@ def do_next_deploy_step(task, step_index):
             # Avoid double handling of failures. For example, set_failed_state
             # from deploy_utils already calls deploying_error_handler.
             if task.node.provision_state != states.DEPLOYFAIL:
-                log_msg = ('Node %(node)s failed deploy step %(step)s. Error: '
+                log_msg = ('Node %(node)s failed deploy step %(step)s: '
                            '%(err)s' % {'node': node.uuid,
                                         'step': node.deploy_step, 'err': e})
                 utils.deploying_error_handler(

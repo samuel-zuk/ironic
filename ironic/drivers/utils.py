@@ -23,6 +23,7 @@ from oslo_utils import timeutils
 
 from ironic.common import exception
 from ironic.common.i18n import _
+from ironic.common import states
 from ironic.common import swift
 from ironic.conductor import utils
 from ironic.drivers import base
@@ -194,13 +195,12 @@ def ensure_next_boot_device(task, driver_info):
     """
     ifbd = driver_info.get('force_boot_device', False)
     if strutils.bool_from_string(ifbd):
-        driver_internal_info = task.node.driver_internal_info
-        if driver_internal_info.get('is_next_boot_persistent') is False:
-            driver_internal_info.pop('is_next_boot_persistent', None)
-            task.node.driver_internal_info = driver_internal_info
+        info = task.node.driver_internal_info
+        if info.get('is_next_boot_persistent') is False:
+            task.node.del_driver_internal_info('is_next_boot_persistent')
             task.node.save()
         else:
-            boot_device = driver_internal_info.get('persistent_boot_device')
+            boot_device = info.get('persistent_boot_device')
             if boot_device:
                 utils.node_set_boot_device(task, boot_device)
 
@@ -218,14 +218,12 @@ def force_persistent_boot(task, device, persistent):
     """
 
     node = task.node
-    driver_internal_info = node.driver_internal_info
     if persistent:
-        driver_internal_info.pop('is_next_boot_persistent', None)
-        driver_internal_info['persistent_boot_device'] = device
+        node.del_driver_internal_info('is_next_boot_persistent')
+        node.set_driver_internal_info('persistent_boot_device', device)
     else:
-        driver_internal_info['is_next_boot_persistent'] = False
+        node.set_driver_internal_info('is_next_boot_persistent', False)
 
-    node.driver_internal_info = driver_internal_info
     node.save()
 
 
@@ -386,6 +384,17 @@ OPTIONAL_PROPERTIES = {
 }
 
 
+KERNEL_APPEND_PARAMS_DESCRIPTION = _(
+    "Additional kernel parameters to pass down to instance kernel. "
+    "These parameters can be consumed by the kernel or by the applications "
+    "by reading /proc/cmdline. Mind severe cmdline size limit. "
+    "When used with virtual media, only applies to ISO images that Ironic "
+    "builds, but not to pre-built ISOs provided via e.g. deploy_iso. "
+    "Overrides the [%(option_group)s]/kernel_append_params configuration "
+    "option, use %%default%% to insert its value."
+)
+
+
 def get_kernel_append_params(node, default):
     """Get the applicable kernel params.
 
@@ -401,7 +410,7 @@ def get_kernel_append_params(node, default):
     for location in ('instance_info', 'driver_info'):
         result = getattr(node, location).get('kernel_append_params')
         if result is not None:
-            return result
+            return result.replace('%default%', default or '')
 
     return default
 
@@ -452,3 +461,23 @@ def get_agent_kernel_ramdisk(node, mode='deploy', deprecated_prefix=None):
 def get_agent_iso(node, mode='deploy', deprecated_prefix=None):
     """Get the agent ISO image."""
     return get_field(node, f'{mode}_iso', deprecated_prefix)
+
+
+def need_prepare_ramdisk(node):
+    """Check if node needs preparing ramdisk
+
+    :param node: Node to check for
+    :returns: True if need to prepare ramdisk, otherwise False
+    """
+    # NOTE(TheJulia): If current node provisioning is something aside from
+    # deployment, clean, rescue or inspect such as conductor takeover,
+    # we should treat this as a no-op and move on otherwise we would
+    # modify the state of the node due to virtual media operations.
+    return node.provision_state in (states.DEPLOYING,
+                                    states.DEPLOYWAIT,
+                                    states.CLEANING,
+                                    states.CLEANWAIT,
+                                    states.RESCUING,
+                                    states.RESCUEWAIT,
+                                    states.INSPECTING,
+                                    states.INSPECTWAIT)

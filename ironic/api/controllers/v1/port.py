@@ -160,7 +160,7 @@ def port_sanitize(port, fields=None):
     api_utils.sanitize_dict(port, fields)
 
 
-def list_convert_with_links(rpc_ports, limit, url=None, fields=None, **kwargs):
+def list_convert_with_links(rpc_ports, limit, url, fields=None, **kwargs):
     ports = []
     for rpc_port in rpc_ports:
         try:
@@ -409,8 +409,9 @@ class PortsController(rest.RestController):
 
         return self._get_ports_collection(node_uuid or node, address,
                                           portgroup, marker, limit, sort_key,
-                                          sort_dir, fields=fields,
-                                          detail=detail, project=project)
+                                          sort_dir, resource_url='ports',
+                                          fields=fields, detail=detail,
+                                          project=project)
 
     @METRICS.timer('PortsController.detail')
     @method.expose()
@@ -464,10 +465,10 @@ class PortsController(rest.RestController):
         if parent != "ports":
             raise exception.HTTPNotFound()
 
-        resource_url = '/'.join(['ports', 'detail'])
         return self._get_ports_collection(node_uuid or node, address,
                                           portgroup, marker, limit, sort_key,
-                                          sort_dir, resource_url,
+                                          sort_dir,
+                                          resource_url='ports/detail',
                                           project=project)
 
     @METRICS.timer('PortsController.get_one')

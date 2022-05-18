@@ -396,6 +396,12 @@ section uses the iDRAC Server Configuration Profile (SCP) and can be edited as
 necessary if it complies with the SCP. For more information about SCP and its
 capabilities, see SCP_Reference_Guide_.
 
+.. NOTE::
+   iDRAC BMC connection settings are not exported to avoid overwriting these in
+   another system when using unmodified exported configuration mold in import
+   step. If need to replicate iDRAC BMC connection settings, then add these
+   settings manually to configuration mold for import step.
+
 To replicate the system configuration to that of a similar system, perform the
 following steps:
 
@@ -459,6 +465,15 @@ RAID Interface
 ==============
 
 See :doc:`/admin/raid` for more information on Ironic RAID support.
+
+RAID interface of ``redfish`` hardware type can be used on iDRAC systems.
+Compared to ``redfish`` RAID interface, using ``idrac-redfish`` adds:
+
+* Waiting for real-time operations to be available on RAID controllers. When
+  using ``redfish`` this is not guaranteed and reboots might be intermittently
+  required to complete,
+* Converting non-RAID disks to RAID mode if there are any,
+* Clearing foreign configuration, if any, after deleting virtual disks.
 
 The following properties are supported by the iDRAC WSMAN and Redfish RAID
 interface implementation:
@@ -918,5 +933,14 @@ During upgrade to 4.40.00.00 or newer iDRAC firmware eHTML5 is automatically
 selected if default plug-in type has been used and never changed. Systems that
 have plug-in type changed will keep selected plug-in type after iDRAC firmware
 upgrade.
+
+Firmware update from Swift fails
+--------------------------------
+
+When using Swift to stage firmware update files in Management interface
+``firmware_update`` clean step of ``redfish`` or ``idrac`` hardware type, the
+cleaning fails with error "An internal error occurred. Unable to complete the
+specified operation." in iDRAC job. Until this is fixed, use HTTP service to
+stage firmware files for iDRAC.
 
 .. _SCP_Reference_Guide: http://downloads.dell.com/manuals/common/dellemc-server-config-profile-refguide.pdf

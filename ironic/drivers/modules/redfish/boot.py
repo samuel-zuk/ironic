@@ -46,13 +46,8 @@ OPTIONAL_PROPERTIES = {
                               "driver should use virtual media USB or floppy "
                               "device for passing configuration information "
                               "to the ramdisk. Defaults to False. Optional."),
-    'kernel_append_params': _("Additional kernel parameters to pass down to "
-                              "instance kernel. These parameters can be "
-                              "consumed by the kernel or by the applications "
-                              "by reading /proc/cmdline. Mind severe cmdline "
-                              "size limit. Overrides "
-                              "[redfish]/kernel_append_params ironic "
-                              "option."),
+    'kernel_append_params': driver_utils.KERNEL_APPEND_PARAMS_DESCRIPTION %
+    {'option_group': 'redfish'},
     'bootloader': _("URL or Glance UUID  of the EFI system partition "
                     "image containing EFI boot loader. This image will be "
                     "used by ironic when building UEFI-bootable ISO "
@@ -468,14 +463,7 @@ class RedfishVirtualMediaBoot(base.BootInterface):
             operation failed on the node.
         """
         node = task.node
-        # NOTE(TheJulia): If this method is being called by something
-        # aside from deployment, clean and rescue, such as conductor takeover,
-        # we should treat this as a no-op and move on otherwise we would
-        # modify the state of the node due to virtual media operations.
-        if node.provision_state not in (states.DEPLOYING,
-                                        states.CLEANING,
-                                        states.RESCUING,
-                                        states.INSPECTING):
+        if not driver_utils.need_prepare_ramdisk(node):
             return
 
         d_info = _parse_driver_info(node)

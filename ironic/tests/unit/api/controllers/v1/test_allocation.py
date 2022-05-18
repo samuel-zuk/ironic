@@ -192,7 +192,9 @@ class TestListAllocations(test_api_base.BaseApiTest):
         self.assertEqual(3, len(data['allocations']))
 
         next_marker = data['allocations'][-1]['uuid']
-        self.assertIn(next_marker, data['next'])
+        self.assertIn('/allocations', data['next'])
+        self.assertIn('limit=3', data['next'])
+        self.assertIn(f'marker={next_marker}', data['next'])
 
     def test_collection_links_default_limit(self):
         cfg.CONF.set_override('max_limit', 3, 'api')
@@ -207,7 +209,10 @@ class TestListAllocations(test_api_base.BaseApiTest):
         self.assertEqual(3, len(data['allocations']))
 
         next_marker = data['allocations'][-1]['uuid']
-        self.assertIn(next_marker, data['next'])
+        self.assertIn('/allocations', data['next'])
+        # FIXME(dtantsur): IMO this should not pass, but it does now
+        self.assertIn('limit=3', data['next'])
+        self.assertIn(f'marker={next_marker}', data['next'])
 
     def test_collection_links_custom_fields(self):
         cfg.CONF.set_override('max_limit', 3, 'api')
@@ -227,8 +232,9 @@ class TestListAllocations(test_api_base.BaseApiTest):
         self.assertEqual(3, len(data['allocations']))
 
         next_marker = data['allocations'][-1]['uuid']
-        self.assertIn(next_marker, data['next'])
-        self.assertIn('fields', data['next'])
+        self.assertIn('/allocations', data['next'])
+        self.assertIn(f'marker={next_marker}', data['next'])
+        self.assertIn(f'fields={fields}', data['next'])
 
     def test_get_collection_pagination_no_uuid(self):
         fields = 'node_uuid'
@@ -420,6 +426,8 @@ class TestListAllocations(test_api_base.BaseApiTest):
                 node_id = self.node.id
             else:
                 node_id = 100000 + i
+                obj_utils.create_test_node(self.context, id=node_id,
+                                           uuid=uuidutils.generate_uuid())
             obj_utils.create_test_allocation(
                 self.context,
                 node_id=node_id,

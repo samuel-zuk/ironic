@@ -362,7 +362,8 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
                                             **IMPORT_CONFIGURATION_ARGSINFO}
 
     @base.deploy_step(priority=0, argsinfo=EXPORT_CONFIGURATION_ARGSINFO)
-    @base.clean_step(priority=0, argsinfo=EXPORT_CONFIGURATION_ARGSINFO)
+    @base.clean_step(priority=0, argsinfo=EXPORT_CONFIGURATION_ARGSINFO,
+                     requires_ramdisk=False)
     def export_configuration(self, task, export_configuration_location):
         """Export the configuration of the server.
 
@@ -396,7 +397,8 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
 
         configuration = drac_utils.execute_oem_manager_method(
             task, 'export system configuration',
-            lambda m: m.export_system_configuration())
+            lambda m: m.export_system_configuration(
+                include_destructive_fields=False))
 
         if configuration and configuration.status_code == 200:
             configuration = {"oem": {"interface": "idrac-redfish",
@@ -410,7 +412,8 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
                        {'node': task.node.uuid}))
 
     @base.deploy_step(priority=0, argsinfo=IMPORT_CONFIGURATION_ARGSINFO)
-    @base.clean_step(priority=0, argsinfo=IMPORT_CONFIGURATION_ARGSINFO)
+    @base.clean_step(priority=0, argsinfo=IMPORT_CONFIGURATION_ARGSINFO,
+                     requires_ramdisk=False)
     def import_configuration(self, task, import_configuration_location):
         """Import and apply the configuration to the server.
 
@@ -445,9 +448,8 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
             lambda m: m.import_system_configuration(
                 json.dumps(configuration["oem"]["data"])),)
 
-        info = task.node.driver_internal_info
-        info['import_task_monitor_url'] = task_monitor.task_monitor_uri
-        task.node.driver_internal_info = info
+        task.node.set_driver_internal_info('import_task_monitor_url',
+                                           task_monitor.task_monitor_uri)
 
         deploy_utils.set_async_step_flags(
             task.node,
@@ -457,7 +459,8 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
         return deploy_utils.reboot_to_finish_step(task)
 
     @base.clean_step(priority=0,
-                     argsinfo=IMPORT_EXPORT_CONFIGURATION_ARGSINFO)
+                     argsinfo=IMPORT_EXPORT_CONFIGURATION_ARGSINFO,
+                     requires_ramdisk=False)
     @base.deploy_step(priority=0,
                       argsinfo=IMPORT_EXPORT_CONFIGURATION_ARGSINFO)
     def import_export_configuration(self, task, import_configuration_location,
@@ -476,9 +479,8 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
         """
         # Import is async operation, setting sub-step to store export config
         # and indicate that it's being executed as part of composite step
-        info = task.node.driver_internal_info
-        info['export_configuration_location'] = export_configuration_location
-        task.node.driver_internal_info = info
+        task.node.set_driver_internal_info('export_configuration_location',
+                                           export_configuration_location)
         task.node.save()
 
         return self.import_configuration(task, import_configuration_location)
@@ -521,9 +523,7 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
             log_msg = ("Import configuration task failed for node "
                        "%(node)s. %(error)s" % {'node': task.node.uuid,
                                                 'error': error_msg})
-            info = node.driver_internal_info
-            info.pop('import_task_monitor_url', None)
-            node.driver_internal_info = info
+            node.del_driver_internal_info('import_task_monitor_url')
             node.save()
             self._set_failed(task, log_msg, error_msg)
             return
@@ -532,9 +532,7 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
             import_task = task_monitor.get_task()
 
             task.upgrade_lock()
-            info = node.driver_internal_info
-            info.pop('import_task_monitor_url', None)
-            node.driver_internal_info = info
+            node.del_driver_internal_info('import_task_monitor_url')
 
             succeeded = False
             if (import_task.task_state == sushy.TASK_STATE_COMPLETED
@@ -557,8 +555,8 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
                           'task_monitor_url': task_monitor_url})
 
                 # If import executed as part of import_export_configuration
-                export_configuration_location =\
-                    info.get('export_configuration_location')
+                export_configuration_location = node.driver_internal_info.get(
+                    'export_configuration_location')
                 if export_configuration_location:
                     # then do sync export configuration before finishing
                     self._cleanup_export_substep(node)
@@ -613,13 +611,11 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
             manager_utils.deploying_error_handler(task, log_msg, error_msg)
 
     def _cleanup_export_substep(self, node):
-        driver_internal_info = node.driver_internal_info
-        driver_internal_info.pop('export_configuration_location', None)
-        node.driver_internal_info = driver_internal_info
+        node.del_driver_internal_info('export_configuration_location')
 
     @METRICS.timer('DracRedfishManagement.clear_job_queue')
     @base.verify_step(priority=0)
-    @base.clean_step(priority=0)
+    @base.clean_step(priority=0, requires_ramdisk=False)
     def clear_job_queue(self, task):
         """Clear iDRAC job queue.
 
@@ -633,7 +629,7 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
 
     @METRICS.timer('DracRedfishManagement.reset_idrac')
     @base.verify_step(priority=0)
-    @base.clean_step(priority=0)
+    @base.clean_step(priority=0, requires_ramdisk=False)
     def reset_idrac(self, task):
         """Reset the iDRAC.
 
@@ -649,7 +645,7 @@ class DracRedfishManagement(redfish_management.RedfishManagement):
 
     @METRICS.timer('DracRedfishManagement.known_good_state')
     @base.verify_step(priority=0)
-    @base.clean_step(priority=0)
+    @base.clean_step(priority=0, requires_ramdisk=False)
     def known_good_state(self, task):
         """Reset iDRAC to known good state.
 
@@ -752,10 +748,9 @@ class DracWSManManagement(base.ManagementInterface):
         #                at the next boot. As a workaround, saving it to
         #                driver_internal_info and committing the change during
         #                power state change.
-        driver_internal_info = node.driver_internal_info
-        driver_internal_info['drac_boot_device'] = {'boot_device': device,
-                                                    'persistent': persistent}
-        node.driver_internal_info = driver_internal_info
+        node.set_driver_internal_info('drac_boot_device',
+                                      {'boot_device': device,
+                                       'persistent': persistent})
         node.save()
 
     @METRICS.timer('DracManagement.get_sensors_data')
@@ -772,7 +767,7 @@ class DracWSManManagement(base.ManagementInterface):
 
     @METRICS.timer('DracManagement.reset_idrac')
     @base.verify_step(priority=0)
-    @base.clean_step(priority=0)
+    @base.clean_step(priority=0, requires_ramdisk=False)
     def reset_idrac(self, task):
         """Reset the iDRAC.
 
@@ -787,7 +782,7 @@ class DracWSManManagement(base.ManagementInterface):
 
     @METRICS.timer('DracManagement.known_good_state')
     @base.verify_step(priority=0)
-    @base.clean_step(priority=0)
+    @base.clean_step(priority=0, requires_ramdisk=False)
     def known_good_state(self, task):
         """Reset the iDRAC, Clear the job queue.
 
@@ -803,7 +798,7 @@ class DracWSManManagement(base.ManagementInterface):
 
     @METRICS.timer('DracManagement.clear_job_queue')
     @base.verify_step(priority=0)
-    @base.clean_step(priority=0)
+    @base.clean_step(priority=0, requires_ramdisk=False)
     def clear_job_queue(self, task):
         """Clear the job queue.
 

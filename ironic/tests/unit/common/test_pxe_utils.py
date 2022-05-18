@@ -128,6 +128,10 @@ class TestPXEUtils(db_base.DbTestCase):
             'boot_from_iso': True,
             'boot_iso_url': 'http://1.2.3.4:1234/uuid/iso'
         })
+        self.ipxe_options_boot_from_ramdisk = self.ipxe_options.copy()
+        self.ipxe_options_boot_from_ramdisk.update({
+            'ramdisk_kernel_arguments': 'ramdisk_params'
+        })
 
         self.node = object_utils.create_test_node(self.context)
 
@@ -286,6 +290,27 @@ class TestPXEUtils(db_base.DbTestCase):
 
         templ_file = 'ironic/tests/unit/drivers/' \
                      'ipxe_config_boot_from_iso.template'
+        with open(templ_file) as f:
+            expected_template = f.read().rstrip()
+        self.assertEqual(str(expected_template), rendered_template)
+
+    def test_default_ipxe_boot_from_ramdisk(self):
+        self.config(
+            pxe_config_template='ironic/drivers/modules/ipxe_config.template',
+            group='pxe'
+        )
+        self.config(http_url='http://1.2.3.4:1234', group='deploy')
+
+        pxe_options = self.ipxe_options_boot_from_ramdisk
+
+        rendered_template = utils.render_template(
+            CONF.pxe.pxe_config_template,
+            {'pxe_options': pxe_options,
+             'ROOT': '{{ ROOT }}'},
+        )
+
+        templ_file = 'ironic/tests/unit/drivers/' \
+                     'ipxe_config_boot_from_ramdisk.template'
         with open(templ_file) as f:
             expected_template = f.read().rstrip()
         self.assertEqual(str(expected_template), rendered_template)
@@ -1489,6 +1514,7 @@ class PXEBuildKickstartConfigOptionsTestCase(db_base.DbTestCase):
                                   shared=True) as task:
             expected = {}
             expected['liveimg_url'] = task.node.instance_info['image_url']
+            expected['config_drive'] = ''
             expected['heartbeat_url'] = (
                 'http://ironic-api/v1/heartbeat/%s' % task.node.uuid
             )
@@ -1571,7 +1597,8 @@ class PXEBuildConfigOptionsTestCase(db_base.DbTestCase):
                                            whle_dsk_img=False,
                                            debug=False, mode='deploy',
                                            ramdisk_params=None,
-                                           expected_pxe_params=None):
+                                           expected_pxe_params=None,
+                                           ramdisk_kernel_opt=None):
         self.config(debug=debug)
         self.config(kernel_append_params='test_param', group='pxe')
 
@@ -1633,6 +1660,8 @@ class PXEBuildConfigOptionsTestCase(db_base.DbTestCase):
             'ari_path': ramdisk,
             'aki_path': kernel,
         }
+        if ramdisk_kernel_opt:
+            expected_options.update({'ramdisk_opts': ramdisk_kernel_opt})
 
         if mode == 'rescue':
             self.node.provision_state = states.RESCUING
@@ -1658,6 +1687,10 @@ class PXEBuildConfigOptionsTestCase(db_base.DbTestCase):
         del self.node.driver_internal_info['is_whole_disk_image']
         self._test_build_pxe_config_options_pxe(debug=True, mode='rescue')
 
+    def test_build_pxe_config_options_pxe_opts_ramdisk_opt(self):
+        self.node.instance_info = {'ramdisk_kernel_arguments': 'cat meow'}
+        self._test_build_pxe_config_options_pxe(ramdisk_kernel_opt='cat meow')
+
     def test_build_pxe_config_options_pxe_local_boot(self):
         del self.node.driver_internal_info['is_whole_disk_image']
         i_info = self.node.instance_info
@@ -1678,6 +1711,15 @@ class PXEBuildConfigOptionsTestCase(db_base.DbTestCase):
         self.node.save()
         self._test_build_pxe_config_options_pxe(whle_dsk_img=True,
                                                 expected_pxe_params='params2')
+
+    def test_build_pxe_config_options_kernel_params_with_default(self):
+        info = self.node.driver_info
+        info['kernel_append_params'] = 'param1 %default% params2'
+        self.node.driver_info = info
+        self.node.save()
+        self._test_build_pxe_config_options_pxe(
+            whle_dsk_img=True,
+            expected_pxe_params='param1 test_param params2')
 
     def test_build_pxe_config_options_kernel_params_from_instance_info(self):
         info = self.node.instance_info
@@ -1884,9 +1926,10 @@ class iPXEBuildConfigOptionsTestCase(db_base.DbTestCase):
             self.config(ipxe_use_swift=True, group='pxe')
             glance = mock.Mock()
             glance_mock.return_value = glance
-            glance.swift_temp_url.side_effect = [
-                pxe_kernel, pxe_ramdisk] = [
-                'swift_kernel', 'swift_ramdisk']
+            glance.swift_temp_url.side_effect = [pxe_kernel, pxe_ramdisk] = [
+                'http://example.com/account/swift_kernel',
+                'http://example.com/account/swift_ramdisk'
+            ]
             image_info = {
                 kernel_label: (uuidutils.generate_uuid(),
                                os.path.join(root_dir,
@@ -1897,6 +1940,7 @@ class iPXEBuildConfigOptionsTestCase(db_base.DbTestCase):
                                              self.node.uuid,
                                              ramdisk_label))
             }
+            expected_initrd_filename = 'swift_ramdisk'
         else:
             pxe_kernel = os.path.join(http_url, self.node.uuid,
                                       kernel_label)
@@ -1912,6 +1956,7 @@ class iPXEBuildConfigOptionsTestCase(db_base.DbTestCase):
                                              self.node.uuid,
                                              ramdisk_label))
             }
+            expected_initrd_filename = ramdisk_label
 
         kernel = os.path.join(http_url, self.node.uuid, 'kernel')
         ramdisk = os.path.join(http_url, self.node.uuid, 'ramdisk')
@@ -1946,7 +1991,7 @@ class iPXEBuildConfigOptionsTestCase(db_base.DbTestCase):
             'ipxe_timeout': ipxe_timeout_in_ms,
             'ari_path': ramdisk,
             'aki_path': kernel,
-            'initrd_filename': ramdisk_label,
+            'initrd_filename': expected_initrd_filename,
         }
 
         if mode == 'rescue':

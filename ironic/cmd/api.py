@@ -39,10 +39,10 @@ def main():
     # Build and start the WSGI app
     launcher = ironic_service.process_launcher()
     server = wsgi_service.WSGIService('ironic_api',
-                                      VersionSelectorApplication,
+                                      VersionSelectorApplication(),
                                       'api')
     launcher.launch_service(server, workers=server.workers)
-    launcher.wait()
+    sys.exit(launcher.wait())
 
 
 if __name__ == '__main__':

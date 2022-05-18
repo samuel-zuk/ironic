@@ -56,7 +56,6 @@ from ironic.common import driver_factory
 from ironic.common import exception
 from ironic.common import faults
 from ironic.common.i18n import _
-from ironic.common import images
 from ironic.common import network
 from ironic.common import nova
 from ironic.common import states
@@ -699,7 +698,7 @@ class ConductorManager(base_manager.BaseConductorManager):
                 raise exception.InstanceRescueFailure(
                     instance=node.instance_uuid,
                     node=node.uuid,
-                    reason=_("Validation failed. Error: %s") % e)
+                    reason=_("Validation failed: %s") % e)
             try:
                 task.process_event(
                     'rescue',
@@ -793,7 +792,7 @@ class ConductorManager(base_manager.BaseConductorManager):
                 raise exception.InstanceUnrescueFailure(
                     instance=node.instance_uuid,
                     node=node.uuid,
-                    reason=_("Validation failed. Error: %s") % e)
+                    reason=_("Validation failed: %s") % e)
 
             try:
                 task.process_event(
@@ -854,7 +853,7 @@ class ConductorManager(base_manager.BaseConductorManager):
             task.driver.rescue.clean_up(task)
         except Exception as e:
             LOG.exception('Failed to clean up rescue for node %(node)s '
-                          'after aborting the operation. Error: %(err)s',
+                          'after aborting the operation: %(err)s',
                           {'node': node.uuid, 'err': e})
             error_msg = _('Failed to clean up rescue after aborting '
                           'the operation')
@@ -1074,7 +1073,7 @@ class ConductorManager(base_manager.BaseConductorManager):
             with excutils.save_and_reraise_exception():
                 LOG.exception('Error in tear_down of node %(node)s: %(err)s',
                               {'node': node.uuid, 'err': e})
-                error = _("Failed to tear down. Error: %s") % e
+                error = _("Failed to tear down: %s") % e
                 utils.node_history_record(task.node, event=error,
                                           event_type=states.UNPROVISION,
                                           error=True,
@@ -1163,8 +1162,8 @@ class ConductorManager(base_manager.BaseConductorManager):
                 task.driver.power.validate(task)
                 task.driver.network.validate(task)
             except exception.InvalidParameterValue as e:
-                msg = (_('Validation failed. Cannot clean node %(node)s. '
-                         'Error: %(msg)s') %
+                msg = (_('Validation of node %(node)s for cleaning '
+                         'failed: %(msg)s') %
                        {'node': node.uuid, 'msg': e})
                 raise exception.InvalidParameterValue(msg)
 
@@ -1358,8 +1357,7 @@ class ConductorManager(base_manager.BaseConductorManager):
                 with excutils.save_and_reraise_exception():
                     LOG.exception('Error in aborting the inspection of '
                                   'node %(node)s', {'node': node.uuid})
-                    error = _('Failed to abort inspection. '
-                              'Error: %s') % e
+                    error = _('Failed to abort inspection: %s') % e
                     utils.node_history_record(task.node, event=error,
                                               event_type=states.INTROSPECTION,
                                               error=True,
@@ -1554,8 +1552,7 @@ class ConductorManager(base_manager.BaseConductorManager):
                       "while trying to get power state."))
         except Exception as e:
             LOG.debug("During power_failure_recovery, could "
-                      "not get power state for node %(node)s, "
-                      "Error: %(err)s.",
+                      "not get power state for node %(node)s: %(err)s",
                       {'node': task.node.uuid, 'err': e})
         else:
             handle_recovery(task, power_state)
@@ -1607,7 +1604,8 @@ class ConductorManager(base_manager.BaseConductorManager):
 
         :param context: request context.
         """
-        offline_conductors = self.dbapi.get_offline_conductors()
+        offline_conductors = utils.exclude_current_conductor(
+            self.host, self.dbapi.get_offline_conductors())
         if not offline_conductors:
             return
 
@@ -1711,10 +1709,7 @@ class ConductorManager(base_manager.BaseConductorManager):
             # being triggered, as such we need to populate the
             # internal info based on the configuration the user has
             # supplied.
-            iwdi = images.is_whole_disk_image(task.context,
-                                              task.node.instance_info)
-            if iwdi is not None:
-                node.set_driver_internal_info('is_whole_disk_image', iwdi)
+            utils.update_image_type(task.context, task.node)
             if deploy_utils.get_boot_option(node) != 'local':
                 # Calling boot validate to ensure that sufficient information
                 # is supplied to allow the node to be able to boot if takeover
@@ -1894,9 +1889,7 @@ class ConductorManager(base_manager.BaseConductorManager):
             # the meantime, we don't know if the is_whole_disk_image value will
             # change or not. It isn't saved to the DB, but only used with this
             # node instance for the current validations.
-            iwdi = images.is_whole_disk_image(context,
-                                              task.node.instance_info)
-            task.node.set_driver_internal_info('is_whole_disk_image', iwdi)
+            utils.update_image_type(context, task.node)
             for iface_name in task.driver.non_vendor_interfaces:
                 iface = getattr(task.driver, iface_name)
                 result = reason = None
@@ -3444,7 +3437,8 @@ class ConductorManager(base_manager.BaseConductorManager):
 
         :param context: request context.
         """
-        offline_conductors = self.dbapi.get_offline_conductors(field='id')
+        offline_conductors = utils.exclude_current_conductor(
+            self.conductor.id, self.dbapi.get_offline_conductors(field='id'))
         for conductor_id in offline_conductors:
             filters = {'state': states.ALLOCATING,
                        'conductor_affinity': conductor_id}
@@ -3659,7 +3653,8 @@ def do_sync_power_state(task, count):
     # Also make sure to cache the current boot_mode and secure_boot states
     utils.node_cache_boot_mode(task)
 
-    if node.power_state and node.power_state == power_state:
+    if ((node.power_state and node.power_state == power_state)
+            or (node.power_state is None and power_state is None)):
         # No action is needed
         return 0
 
@@ -3669,7 +3664,8 @@ def do_sync_power_state(task, count):
     node = task.node
 
     # Repeat all checks with exclusive lock to avoid races
-    if node.power_state and node.power_state == power_state:
+    if ((node.power_state and node.power_state == power_state)
+            or (node.power_state is None and power_state is None)):
         # Node power state was updated to the correct value
         return 0
     elif node.provision_state in SYNC_EXCLUDED_STATES or node.maintenance:

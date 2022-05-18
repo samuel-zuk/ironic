@@ -113,7 +113,17 @@ Network burn-in
 ===============
 
 Burning in the network needs a little more config, since we need a pair
-of nodes to perform the test. Therefore, this test needs to set
+of nodes to perform the test. This pairing can be done either in a static
+way, i.e. pairs are defined upfront, or dynamically via a distributed
+coordination backend which orchestrates the pair matching. While the
+static approach is more predictable in terms of which nodes test each
+other, the dynamic approach avoids nodes being blocked in case there
+are issues with servers and simply pairs all available nodes.
+
+Static network burn-in configuration
+------------------------------------
+
+To define pairs of nodes statically, each node can be assigned a
 ``agent_burnin_fio_network_config`` JSON which requires a ``role`` field
 (values: ``reader``, ``writer``) and a ``partner`` field (value is the
 hostname of the other node to test), like:
@@ -125,6 +135,45 @@ hostname of the other node to test), like:
     baremetal node set --driver-info agent_burnin_fio_network_config= \
         '{"role": "reader", "partner": "$HOST1"}' $NODE_NAME_OR_UUID2
 
+Dynamic network burn-in configuration
+-------------------------------------
+
+In order to use dynamic pair matching, a coordination backend is used
+via `tooz <https://docs.openstack.org/tooz/latest/>`_. The corresponding
+backend URL then needs to be added to the node, e.g. for a Zookeeper
+backend it would look similar to:
+
+..  code-block:: console
+
+    baremetal node set --driver-info \
+        agent_burnin_fio_network_pairing_backend_url= \
+        'zookeeper://zk1.xyz.com:2181,zk2.xyz.com:2181,zk3.xyz.com:2181' \
+        $NODE_NAME_OR_UUID1
+    baremetal node set --driver-info \
+        agent_burnin_fio_network_pairing_backend_url= \
+        'zookeeper://zk1.xyz.com:2181,zk2.xyz.com:2181,zk3.xyz.com:2181' \
+        $NODE_NAME_OR_UUID2
+    ...
+    baremetal node set --driver-info \
+        agent_burnin_fio_network_pairing_backend_url= \
+        'zookeeper://zk1.xyz.com:2181,zk2.xyz.com:2181,zk3.xyz.com:2181' \
+        $NODE_NAME_OR_UUIDN
+
+Different deliveries or network ports can be separated by creating
+different rooms on the backend with:
+
+..  code-block:: console
+
+    baremetal node set --driver-info \
+    agent_burnin_fio_network_pairing_group_name=$DELIVERY $NODE_NAME_OR_UUID
+
+This allows to control which nodes (or interfaces) connect with which other
+nodes (or interfaces).
+
+
+Launching network burn-in
+-------------------------
+
 In addition and similar to the other tests, there is a runtime option
 to be set (only on the writer):
 
@@ -133,7 +182,7 @@ to be set (only on the writer):
     baremetal node set --driver-info agent_burnin_fio_network_runtime=600 \
         $NODE_NAME_OR_UUID
 
-Then launch the test with:
+The actual network burn-in can then be launched with:
 
 .. code-block:: console
 
@@ -144,6 +193,30 @@ Then launch the test with:
 
 Both nodes will wait for the other node to show up and block while waiting.
 If the partner does not show up, the cleaning timeout will step in.
+
+Logging
+=======
+
+Since most of the burn-in steps are also providing information about the
+performance of the stressed components, keeping this information for
+verification or acceptance purposes may be desirable. By default, the
+output of the burn-in tools goes to the journal of the Ironic Python
+Agent and is therefore sent back as an archive to the conductor. In order
+to consume the output of the burn-in steps more easily, or even in real-time,
+the nodes can be configured to store the output of the individual steps to
+files in the ramdisk (from where they can be picked up by a logging pipeline).
+
+The configuration of the outpout file is done via one of
+``agent_burnin_cpu_outputfile``, ``agent_burnin_vm_outputfile``,
+``agent_burnin_fio_disk_outputfile``, and
+``agent_burnin_fio_network_outputfile`` parameters which need to be added
+to a node like:
+
+.. code-block:: console
+
+    baremetal node set --driver-info agent_burnin_cpu_outputfile=\
+        '/var/log/burnin.cpu' $NODE_NAME_OR_UUID
+
 
 Additional Information
 ======================

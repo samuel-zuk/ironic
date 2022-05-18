@@ -269,9 +269,7 @@ class CustomAgentDeploy(agent_base.AgentBaseMixin, agent_base.AgentDeployMixin,
             # deploy step.
             if not task.node.driver_internal_info.get('deployment_reboot'):
                 manager_utils.node_power_action(task, states.REBOOT)
-            info = task.node.driver_internal_info
-            info.pop('deployment_reboot', None)
-            task.node.driver_internal_info = info
+            task.node.del_driver_internal_info('deployment_reboot')
             task.node.save()
             return states.DEPLOYWAIT
 
@@ -473,6 +471,13 @@ class AgentDeploy(CustomAgentDeploy):
 
         deploy_utils.check_for_missing_params(params, error_msg)
 
+        image_type = node.instance_info.get('image_type')
+        if image_type and image_type not in images.VALID_IMAGE_TYPES:
+            raise exception.InvalidParameterValue(
+                _('Invalid image_type "%(value)s", valid are %(valid)s')
+                % {'value': image_type,
+                   'valid': ', '.join(images.VALID_IMAGE_TYPES)})
+
         # NOTE(dtantsur): glance images contain a checksum; for file images we
         # will recalculate the checksum anyway.
         if (not service_utils.is_glance_image(image_source)
@@ -499,6 +504,11 @@ class AgentDeploy(CustomAgentDeploy):
 
         validate_http_provisioning_configuration(node)
         validate_image_proxies(node)
+
+        capabilities = utils.parse_instance_info_capabilities(node)
+        if 'boot_option' in capabilities:
+            LOG.warning("The boot_option capability has been deprecated, "
+                        "please unset it for node %s", node.uuid)
 
     @METRICS.timer('AgentDeployMixin.write_image')
     @base.deploy_step(priority=80)
@@ -600,15 +610,13 @@ class AgentDeploy(CustomAgentDeploy):
         # NOTE(mjturek): In the case of local boot using a partition image on
         # ppc64* hardware we need to provide the 'PReP_Boot_partition_uuid' to
         # direct where the bootloader should be installed.
-        driver_internal_info = task.node.driver_internal_info
         client = agent_client.get_client(task)
         partition_uuids = client.get_partition_uuids(node).get(
             'command_result') or {}
         root_uuid = partition_uuids.get('root uuid')
 
         if root_uuid:
-            driver_internal_info['root_uuid_or_disk_id'] = root_uuid
-            task.node.driver_internal_info = driver_internal_info
+            node.set_driver_internal_info('root_uuid_or_disk_id', root_uuid)
             task.node.save()
         elif not iwdi:
             LOG.error('No root UUID returned from the ramdisk for node '
@@ -738,7 +746,7 @@ class AgentRAID(base.RAIDInterface):
             create_nonroot_volumes=create_nonroot_volumes)
         # Rewrite it back to the node object, but no need to save it as
         # we need to just send this to the agent ramdisk.
-        node.driver_internal_info['target_raid_config'] = target_raid_config
+        node.set_driver_internal_info('target_raid_config', target_raid_config)
 
         LOG.debug("Calling agent RAID create_configuration for node %(node)s "
                   "with the following target RAID configuration: %(target)s",

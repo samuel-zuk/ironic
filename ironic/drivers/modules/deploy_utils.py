@@ -306,30 +306,36 @@ def agent_add_clean_params(task):
 
     :param task: a TaskManager instance.
     """
-    info = task.node.driver_internal_info
 
     random_iterations = CONF.deploy.shred_random_overwrite_iterations
-    info['agent_erase_devices_iterations'] = random_iterations
+    node = task.node
+    node.set_driver_internal_info('agent_erase_devices_iterations',
+                                  random_iterations)
     zeroize = CONF.deploy.shred_final_overwrite_with_zeros
-    info['agent_erase_devices_zeroize'] = zeroize
+    node.set_driver_internal_info('agent_erase_devices_zeroize', zeroize)
     erase_fallback = CONF.deploy.continue_if_disk_secure_erase_fails
-    info['agent_continue_if_secure_erase_failed'] = erase_fallback
+    node.set_driver_internal_info('agent_continue_if_secure_erase_failed',
+                                  erase_fallback)
     # NOTE(janders) ``agent_continue_if_ata_erase_failed`` is deprecated and
     # will be removed in the "Y" cycle. The replacement option
     # ``agent_continue_if_secure_erase_failed`` is used to control shred
     #  fallback for both ATA Secure Erase and NVMe Secure Erase.
     # The ``agent_continue_if_ata_erase_failed`` line can
     # be deleted along with this comment when support for it is fully removed.
-    info['agent_continue_if_ata_erase_failed'] = erase_fallback
+    node.set_driver_internal_info('agent_continue_if_ata_erase_failed',
+                                  erase_fallback)
     nvme_secure_erase = CONF.deploy.enable_nvme_secure_erase
-    info['agent_enable_nvme_secure_erase'] = nvme_secure_erase
+    node.set_driver_internal_info('agent_enable_nvme_secure_erase',
+                                  nvme_secure_erase)
     secure_erase = CONF.deploy.enable_ata_secure_erase
-    info['agent_enable_ata_secure_erase'] = secure_erase
-    info['disk_erasure_concurrency'] = CONF.deploy.disk_erasure_concurrency
-    info['agent_erase_skip_read_only'] = CONF.deploy.erase_skip_read_only
+    node.set_driver_internal_info('agent_enable_ata_secure_erase',
+                                  secure_erase)
+    node.set_driver_internal_info('disk_erasure_concurrency',
+                                  CONF.deploy.disk_erasure_concurrency)
+    node.set_driver_internal_info('agent_erase_skip_read_only',
+                                  CONF.deploy.erase_skip_read_only)
 
-    task.node.driver_internal_info = info
-    task.node.save()
+    node.save()
 
 
 def try_set_boot_device(task, device, persistent=True):
@@ -564,24 +570,27 @@ def validate_image_properties(task, deploy_info):
     if not image_href:
         image_href = boot_iso
 
-    properties = []
-    if boot_iso or task.node.driver_internal_info.get('is_whole_disk_image'):
-        # No image properties are required in this case
+    boot_option = get_boot_option(task.node)
+
+    if (boot_iso
+            or task.node.driver_internal_info.get('is_whole_disk_image')
+            or boot_option == 'local'):
+        # No image properties are required in this case, but validate that the
+        # image at least looks reasonable.
+        try:
+            image_service.get_image_service(image_href, context=task.context)
+        except exception.ImageRefValidationFailed as e:
+            raise exception.InvalidParameterValue(err=e)
         return
 
     if service_utils.is_glance_image(image_href):
         properties = ['kernel_id', 'ramdisk_id']
-        boot_option = get_boot_option(task.node)
         if boot_option == 'kickstart':
             properties.append('stage2_id')
-    else:
-        properties = ['kernel', 'ramdisk']
-
-    if image_href:
         image_props = get_image_properties(task.context, image_href)
     else:
-        # Ramdisk deploy, no image_source is present
-        image_props = []
+        properties = ['kernel', 'ramdisk']
+        image_props = {}
 
     missing_props = []
     for prop in properties:
@@ -593,12 +602,6 @@ def validate_image_properties(task, deploy_info):
         raise exception.MissingParameterValue(_(
             "Image %(image)s is missing the following properties: "
             "%(properties)s") % {'image': image_href, 'properties': props})
-
-
-def get_default_boot_option():
-    """Gets the default boot option."""
-    # TODO(TheJulia): Deprecated: Remove after Ussuri.
-    return CONF.deploy.default_boot_option
 
 
 def get_boot_option(node):
@@ -797,7 +800,8 @@ def get_image_instance_info(node):
                 "specified at the same time."))
         info['boot_iso'] = boot_iso
     else:
-        if get_boot_option(node) == 'ramdisk':
+        boot_option = get_boot_option(node)
+        if boot_option == 'ramdisk':
             # Ramdisk deploy does not require an image
             info['kernel'] = node.instance_info.get('kernel')
             info['ramdisk'] = node.instance_info.get('ramdisk')
@@ -807,6 +811,7 @@ def get_image_instance_info(node):
             is_whole_disk_image = node.driver_internal_info.get(
                 'is_whole_disk_image')
             if (not is_whole_disk_image
+                    and boot_option != 'local'
                     and not service_utils.is_glance_image(image_source)):
                 info['kernel'] = node.instance_info.get('kernel')
                 info['ramdisk'] = node.instance_info.get('ramdisk')
@@ -821,8 +826,7 @@ def get_image_instance_info(node):
     return info
 
 
-_ERR_MSG_INVALID_DEPLOY = _("Cannot validate parameter for driver deploy. "
-                            "Invalid parameter %(param)s. Reason: %(reason)s")
+_ERR_MSG_INVALID_DEPLOY = _("Invalid parameter %(param)s: %(reason)s")
 
 
 def parse_instance_info(node):
@@ -844,16 +848,17 @@ def parse_instance_info(node):
     i_info = {}
     i_info['image_source'] = info.get('image_source')
     iwdi = node.driver_internal_info.get('is_whole_disk_image')
+    boot_option = get_boot_option(node)
     if not iwdi:
         if (i_info['image_source']
+                and boot_option != 'local'
                 and not service_utils.is_glance_image(
                     i_info['image_source'])):
             i_info['kernel'] = info.get('kernel')
             i_info['ramdisk'] = info.get('ramdisk')
         i_info['root_gb'] = info.get('root_gb')
 
-    error_msg = _("Cannot validate driver deploy. Some parameters were missing"
-                  " in node's instance_info")
+    error_msg = _("Some parameters were missing in node's instance_info")
     check_for_missing_params(i_info, error_msg)
 
     # This is used in many places, so keep it even for whole-disk images.
@@ -922,13 +927,12 @@ def _check_disk_layout_unchanged(node, i_info):
     """
     # If a node has been deployed to, this is the instance information
     # used for that deployment.
-    driver_internal_info = node.driver_internal_info
-    if 'instance' not in driver_internal_info:
+    if 'instance' not in node.driver_internal_info:
         return
 
     error_msg = ''
     for param in DISK_LAYOUT_PARAMS:
-        param_value = int(driver_internal_info['instance'][param])
+        param_value = int(node.driver_internal_info['instance'][param])
         if param_value != int(i_info[param]):
             error_msg += (_(' Deployed value of %(param)s was %(param_value)s '
                             'but requested value is %(request_value)s.') %
@@ -1066,7 +1070,7 @@ def _validate_image_url(node, url, secret=False):
     except exception.ImageRefValidationFailed as e:
         with excutils.save_and_reraise_exception():
             LOG.error("The specified URL is not a valid HTTP(S) URL or is "
-                      "not reachable for node %(node)s. Error: %(msg)s",
+                      "not reachable for node %(node)s: %(msg)s",
                       {'node': node.uuid, 'msg': e})
 
 
@@ -1175,6 +1179,7 @@ def build_instance_info_for_deploy(task):
     iwdi = node.driver_internal_info.get('is_whole_disk_image')
     image_source = instance_info['image_source']
     image_download_source = get_image_download_source(node)
+    boot_option = get_boot_option(task.node)
 
     if service_utils.is_glance_image(image_source):
         glance = image_service.GlanceImageService(context=task.context)
@@ -1197,7 +1202,7 @@ def build_instance_info_for_deploy(task):
         instance_info['image_tags'] = image_info.get('tags', [])
         instance_info['image_properties'] = image_info['properties']
 
-        if not iwdi:
+        if not iwdi and boot_option != 'local':
             instance_info['kernel'] = image_info['properties']['kernel_id']
             instance_info['ramdisk'] = image_info['properties']['ramdisk_id']
     elif (image_source.startswith('file://')
@@ -1208,11 +1213,11 @@ def build_instance_info_for_deploy(task):
         instance_info['image_url'] = image_source
 
     if not iwdi:
-        instance_info['image_type'] = 'partition'
+        instance_info['image_type'] = images.IMAGE_TYPE_PARTITION
         i_info = parse_instance_info(node)
         instance_info.update(i_info)
     else:
-        instance_info['image_type'] = 'whole-disk-image'
+        instance_info['image_type'] = images.IMAGE_TYPE_WHOLE_DISK
     return instance_info
 
 
@@ -1271,19 +1276,17 @@ def populate_storage_driver_internal_info(task):
     boot_capability = ("%s_volume_boot" % vol_type)
     deploy_capability = ("%s_volume_deploy" % vol_type)
     vol_uuid = boot_volume['uuid']
-    driver_internal_info = node.driver_internal_info
     if check_interface_capability(task.driver.boot, boot_capability):
-        driver_internal_info['boot_from_volume'] = vol_uuid
+        node.set_driver_internal_info('boot_from_volume', vol_uuid)
     # NOTE(TheJulia): This would be a convenient place to check
     # if we need to know about deploying the volume.
     if (check_interface_capability(task.driver.deploy, deploy_capability)
             and task.driver.storage.should_write_image(task)):
-        driver_internal_info['boot_from_volume_deploy'] = vol_uuid
+        node.set_driver_internal_info('boot_from_volume_deploy', vol_uuid)
         # NOTE(TheJulia): This is also a useful place to include a
         # root device hint since we should/might/be able to obtain
         # and supply that information to IPA if it needs to write
         # the image to the volume.
-    node.driver_internal_info = driver_internal_info
     node.save()
 
 
@@ -1305,10 +1308,8 @@ def tear_down_storage_configuration(task):
                  {'target': volume.uuid, 'node': task.node.uuid})
 
     node = task.node
-    driver_internal_info = node.driver_internal_info
-    driver_internal_info.pop('boot_from_volume', None)
-    driver_internal_info.pop('boot_from_volume_deploy', None)
-    node.driver_internal_info = driver_internal_info
+    node.del_driver_internal_info('boot_from_volume')
+    node.del_driver_internal_info('boot_from_volume_deploy')
     node.save()
 
 
@@ -1346,7 +1347,7 @@ def get_async_step_return_state(node):
     return states.CLEANWAIT if node.clean_step else states.DEPLOYWAIT
 
 
-def _check_agent_token_prior_to_agent_reboot(driver_internal_info):
+def _check_agent_token_prior_to_agent_reboot(node):
     """Removes the agent token if it was not pregenerated.
 
     Removal of the agent token in cases where it is not pregenerated
@@ -1357,11 +1358,11 @@ def _check_agent_token_prior_to_agent_reboot(driver_internal_info):
     already included in the payload and must be generated again
     upon lookup.
 
-    :param driver_internal_info: The driver_interal_info dict object
-                                 from a Node object.
+    :param node: The Node object.
     """
-    if not driver_internal_info.get('agent_secret_token_pregenerated', False):
-        driver_internal_info.pop('agent_secret_token', None)
+    if not node.driver_internal_info.get('agent_secret_token_pregenerated',
+                                         False):
+        node.del_driver_internal_info('agent_secret_token')
 
 
 def set_async_step_flags(node, reboot=None, skip_current_step=None,
@@ -1383,25 +1384,25 @@ def set_async_step_flags(node, reboot=None, skip_current_step=None,
         corresponding polling flag is not set in the node's
         driver_internal_info.
     """
-    info = node.driver_internal_info
-    cleaning = {'reboot': 'cleaning_reboot',
-                'skip': 'skip_current_clean_step',
-                'polling': 'cleaning_polling'}
-    deployment = {'reboot': 'deployment_reboot',
-                  'skip': 'skip_current_deploy_step',
-                  'polling': 'deployment_polling'}
-    fields = cleaning if node.clean_step else deployment
+    if node.clean_step:
+        reboot_field = 'cleaning_reboot'
+        skip_field = 'skip_current_clean_step'
+        polling_field = 'cleaning_polling'
+    else:
+        reboot_field = 'deployment_reboot'
+        skip_field = 'skip_current_deploy_step'
+        polling_field = 'deployment_polling'
+
     if reboot is not None:
-        info[fields['reboot']] = reboot
+        node.set_driver_internal_info(reboot_field, reboot)
         if reboot:
             # If rebooting, we must ensure that we check and remove
             # an agent token if necessary.
-            _check_agent_token_prior_to_agent_reboot(info)
+            _check_agent_token_prior_to_agent_reboot(node)
     if skip_current_step is not None:
-        info[fields['skip']] = skip_current_step
+        node.set_driver_internal_info(skip_field, skip_current_step)
     if polling is not None:
-        info[fields['polling']] = polling
-    node.driver_internal_info = info
+        node.set_driver_internal_info(polling_field, polling)
     node.save()
 
 
@@ -1421,7 +1422,10 @@ def reboot_to_finish_step(task):
     :returns: states.CLEANWAIT if cleaning operation in progress
               or states.DEPLOYWAIT if deploy operation in progress.
     """
-    prepare_agent_boot(task)
+    disable_ramdisk = task.node.driver_internal_info.get(
+        'cleaning_disable_ramdisk')
+    if not disable_ramdisk:
+        prepare_agent_boot(task)
     manager_utils.node_power_action(task, states.REBOOT)
     return get_async_step_return_state(task.node)
 
@@ -1446,5 +1450,5 @@ def get_root_device_for_deploy(node):
     except ValueError as e:
         raise exception.InvalidParameterValue(
             _('Failed to validate the root device hints %(hints)s (from the '
-              'node\'s %(source)s) for node %(node)s. Error: %(error)s') %
+              'node\'s %(source)s) for node %(node)s: %(error)s') %
             {'node': node.uuid, 'hints': hints, 'source': source, 'error': e})

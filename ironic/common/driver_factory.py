@@ -17,13 +17,12 @@ import collections
 
 from oslo_concurrency import lockutils
 from oslo_log import log
-from stevedore import named
+import stevedore
 
 from ironic.common import exception
 from ironic.common.i18n import _
 from ironic.conf import CONF
 from ironic.drivers import base as driver_base
-from ironic.drivers import fake_hardware
 
 
 LOG = log.getLogger(__name__)
@@ -98,6 +97,7 @@ def get_interface(hw_type, interface_type, interface_name):
             entrypoint=factory._entrypoint_name,
             valid=factory.names)
 
+    from ironic.drivers import fake_hardware  # avoid circular import
     if isinstance(hw_type, fake_hardware.FakeHardware):
         # NOTE(dtantsur): special-case fake hardware type to allow testing with
         # any combinations of interface implementations.
@@ -404,7 +404,7 @@ class BaseDriverFactory(object):
             cls._set_enabled_drivers()
 
             cls._extension_manager = (
-                named.NamedExtensionManager(
+                stevedore.NamedExtensionManager(
                     cls._entrypoint_name,
                     cls._enabled_driver_list,
                     invoke_on_load=True,
@@ -429,6 +429,34 @@ class BaseDriverFactory(object):
         return ((ext.name, ext.obj) for ext in self._extension_manager)
 
 
+class InterfaceFactory(BaseDriverFactory):
+
+    # Name of a HardwareType attribute with a list of supported interfaces
+    _supported_driver_list_field = ''
+
+    @classmethod
+    def _set_enabled_drivers(cls):
+        super()._set_enabled_drivers()
+        if cls._enabled_driver_list:
+            return
+
+        tmp_ext_mgr = stevedore.ExtensionManager(
+            cls._entrypoint_name,
+            invoke_on_load=False,  # do not create interfaces
+            on_load_failure_callback=cls._catch_driver_not_found)
+        cls_names = {v.plugin: k for (k, v) in tmp_ext_mgr.items()}
+
+        # Fallback: calculate based on hardware type defaults
+        for hw_type in hardware_types().values():
+            supported = getattr(hw_type, cls._supported_driver_list_field)[0]
+            try:
+                name = cls_names[supported]
+            except KeyError:
+                raise KeyError("%s not in %s" % (supported, cls_names))
+            if name not in cls._enabled_driver_list:
+                cls._enabled_driver_list.append(name)
+
+
 def _warn_if_unsupported(ext):
     if not ext.obj.supported:
         LOG.warning('Driver "%s" is UNSUPPORTED. It has been deprecated '
@@ -443,10 +471,12 @@ class HardwareTypesFactory(BaseDriverFactory):
 
 _INTERFACE_LOADERS = {
     name: type('%sInterfaceFactory' % name.capitalize(),
-               (BaseDriverFactory,),
+               (InterfaceFactory,),
                {'_entrypoint_name': 'ironic.hardware.interfaces.%s' % name,
                 '_enabled_driver_list_config_option':
                 'enabled_%s_interfaces' % name,
+                '_supported_driver_list_field':
+                'supported_%s_interfaces' % name,
                 '_logging_template':
                 "Loaded the following %s interfaces: %%s" % name})
     for name in driver_base.ALL_INTERFACES

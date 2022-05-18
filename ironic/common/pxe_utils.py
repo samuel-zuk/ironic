@@ -18,6 +18,7 @@ import copy
 import os
 import shutil
 import tempfile
+from urllib import parse as urlparse
 
 from ironic_lib import utils as ironic_utils
 import jinja2
@@ -598,8 +599,7 @@ def is_ipxe_enabled(task):
     """Return true if ipxe is set.
 
     :param task: A TaskManager object
-    :returns: boolean true if ``[pxe]ipxe_enabled`` is configured
-              or if the task driver instance is the iPXE driver.
+    :returns: boolean true if the task driver instance is the iPXE driver.
     """
     return 'ipxe_boot' in task.driver.boot.capabilities
 
@@ -667,47 +667,68 @@ def get_instance_image_info(task, ipxe_enabled=False):
 
         return image_info
 
-    labels = ('kernel', 'ramdisk')
+    image_properties = None
     d_info = deploy_utils.get_image_instance_info(node)
+
+    def _get_image_properties():
+        nonlocal image_properties
+        if not image_properties:
+            glance_service = service.GlanceImageService(context=ctx)
+            image_properties = glance_service.show(
+                d_info['image_source'])['properties']
+
+    labels = ('kernel', 'ramdisk')
     if not (i_info.get('kernel') and i_info.get('ramdisk')):
-        glance_service = service.GlanceImageService(context=ctx)
-        iproperties = glance_service.show(d_info['image_source'])['properties']
+        # NOTE(rloo): If both are not specified in instance_info
+        # we won't use any of them. We'll use the values specified
+        # with the image, which we assume have been set.
+        _get_image_properties()
         for label in labels:
-            i_info[label] = str(iproperties[label + '_id'])
+            i_info[label] = str(image_properties[label + '_id'])
         node.instance_info = i_info
         node.save()
 
     anaconda_labels = ()
     if deploy_utils.get_boot_option(node) == 'kickstart':
-        # stage2  - Installer stage2 squashfs image
-        # ks_template - Anaconda kickstart template
+        # stage2: installer stage2 squashfs image
+        # ks_template: anaconda kickstart template
         # ks_cfg - rendered ks_template
         anaconda_labels = ('stage2', 'ks_template', 'ks_cfg')
-        if not (i_info.get('stage2') and i_info.get('ks_template')):
-            iproperties = glance_service.show(
-                d_info['image_source']
-            )['properties']
-            for label in anaconda_labels:
-                # ks_template is an optional property on the image
-                if (label == 'ks_template'
-                        and not iproperties.get('ks_template')):
-                    i_info[label] = CONF.anaconda.default_ks_template
-                elif label == 'ks_cfg':
-                    i_info[label] = ''
-                elif label == 'stage2' and 'stage2_id' not in iproperties:
-                    msg = ("stage2_id property missing on the image. "
-                           "The anaconda deploy interface requires stage2_id "
-                           "property to be associated with the os image. ")
+        # NOTE(rloo): We save stage2 & ks_template values in case they
+        # are changed by the user after we start using them and to
+        # prevent re-computing them again.
+        if not node.driver_internal_info.get('stage2'):
+            if i_info.get('stage2'):
+                node.set_driver_internal_info('stage2', i_info['stage2'])
+            else:
+                _get_image_properties()
+                if 'stage2_id' not in image_properties:
+                    msg = (_("'stage2_id' is missing from the properties of "
+                             "the OS image %s. The anaconda deploy interface "
+                             "requires this to be set with the OS image or "
+                             "in instance_info['stage2']. ") %
+                           d_info['image_source'])
                     raise exception.ImageUnacceptable(msg)
                 else:
-                    i_info[label] = str(iproperties['stage2_id'])
-
-            node.instance_info = i_info
+                    node.set_driver_internal_info(
+                        'stage2', str(image_properties['stage2_id']))
+            if i_info.get('ks_template'):
+                node.set_driver_internal_info('ks_template',
+                                              i_info['ks_template'])
+            else:
+                _get_image_properties()
+                # ks_template is an optional property on the image
+                if 'ks_template' not in image_properties:
+                    node.set_driver_internal_info(
+                        'ks_template', CONF.anaconda.default_ks_template)
+                else:
+                    node.set_driver_internal_info(
+                        'ks_template', str(image_properties['ks_template']))
             node.save()
 
     for label in labels + anaconda_labels:
         image_info[label] = (
-            i_info[label],
+            i_info.get(label) or node.driver_internal_info.get(label, ''),
             get_file_path_from_label(node.uuid, root_dir, label)
         )
 
@@ -744,6 +765,7 @@ def build_deploy_pxe_options(task, pxe_info, mode='deploy',
     node = task.node
     kernel_label = '%s_kernel' % mode
     ramdisk_label = '%s_ramdisk' % mode
+    initrd_filename = ramdisk_label
     for label, option in ((kernel_label, 'deployment_aki_path'),
                           (ramdisk_label, 'deployment_ari_path')):
         if ipxe_enabled:
@@ -752,6 +774,10 @@ def build_deploy_pxe_options(task, pxe_info, mode='deploy',
                     and service_utils.is_glance_image(image_href)):
                 pxe_opts[option] = images.get_temp_url_for_glance_image(
                     task.context, image_href)
+                if label == ramdisk_label:
+                    path = urlparse.urlparse(pxe_opts[option]).path.strip('/')
+                    if path:
+                        initrd_filename = path.split('/')[-1]
             else:
                 pxe_opts[option] = '/'.join([CONF.deploy.http_url, node.uuid,
                                             label])
@@ -759,7 +785,7 @@ def build_deploy_pxe_options(task, pxe_info, mode='deploy',
             pxe_opts[option] = os.path.relpath(pxe_info[label][1],
                                                CONF.pxe.tftp_root)
     if ipxe_enabled:
-        pxe_opts['initrd_filename'] = ramdisk_label
+        pxe_opts['initrd_filename'] = initrd_filename
     return pxe_opts
 
 
@@ -941,6 +967,7 @@ def build_kickstart_config_options(task):
         node.uuid
     )
     params['heartbeat_url'] = heartbeat_url
+    params['config_drive'] = ks_utils.prepare_config_drive(task)
     return {'ks_options': params}
 
 
@@ -1051,6 +1078,7 @@ def validate_kickstart_template(ks_template):
     """
     ks_options = {'liveimg_url': 'fake_image_url',
                   'agent_token': 'fake_token',
+                  'config_drive': '',
                   'heartbeat_url': 'fake_heartbeat_url'}
     params = {'ks_options': ks_options}
     try:
@@ -1090,16 +1118,17 @@ def validate_kickstart_file(ks_cfg):
         return
 
     with tempfile.NamedTemporaryFile(
-            dir=CONF.tempdir, suffix='.cfg') as ks_file:
-        ks_file.writelines(ks_cfg)
+            dir=CONF.tempdir, suffix='.cfg', mode='wt') as ks_file:
+        ks_file.write(ks_cfg)
+        ks_file.flush()
         try:
-            result = utils.execute(
+            utils.execute(
                 'ksvalidator', ks_file.name, check_on_exit=[0], attempts=1
             )
-        except processutils.ProcessExecutionError:
-            msg = _(("The kickstart file generated does not pass validation. "
-                     "The ksvalidator tool returned following error(s): %s") %
-                    (result))
+        except processutils.ProcessExecutionError as e:
+            msg = (_("The kickstart file generated does not pass validation. "
+                     "The ksvalidator tool returned the following error: %s") %
+                   e)
             raise exception.InvalidKickstartFile(msg)
 
 
@@ -1168,9 +1197,6 @@ def prepare_instance_kickstart_config(task, image_info, anaconda_boot=False):
     ks_options = build_kickstart_config_options(task)
     kickstart_template = image_info['ks_template'][1]
     ks_cfg = utils.render_template(kickstart_template, ks_options)
-    ks_config_drive = ks_utils.prepare_config_drive(task)
-    if ks_config_drive:
-        ks_cfg = ks_cfg + ks_config_drive
     utils.write_to_file(image_info['ks_cfg'][1], ks_cfg,
                         CONF.pxe.file_permission)
 
@@ -1197,17 +1223,14 @@ def cache_ramdisk_kernel(task, pxe_info, ipxe_enabled=False):
     else:
         path = os.path.join(CONF.pxe.tftp_root, node.uuid)
     ensure_tree(path)
-    # anconda deploy will have 'stage2' as one of the labels in pxe_info dict
-    if 'stage2' in pxe_info.keys():
-        # stage2  will be stored in ipxe http directory. So make sure they
-        # exist.
-        ensure_tree(
-            get_file_path_from_label(
-                node.uuid,
-                CONF.deploy.http_root,
-                'stage2'
-            )
-        )
+    # anaconda deploy will have 'stage2' as one of the labels in pxe_info dict
+    if 'stage2' in pxe_info:
+        # stage2 will be stored in ipxe http directory so make sure the
+        # directory exists.
+        file_path = get_file_path_from_label(node.uuid,
+                                             CONF.deploy.http_root,
+                                             'stage2')
+        ensure_tree(os.path.dirname(file_path))
         # ks_cfg is rendered later by the driver using ks_template. It cannot
         # be fetched and cached.
         t_pxe_info.pop('ks_cfg')

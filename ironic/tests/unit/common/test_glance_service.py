@@ -147,10 +147,11 @@ class TestGlanceImageService(base.TestCase):
             'os_hash_algo': None,
             'os_hash_value': None,
         }
-        with mock.patch.object(self.service, 'call', return_value=image,
-                               autospec=True):
-            image_meta = self.service.show(image_id)
-            self.service.call.assert_called_once_with('get', image_id)
+        if not mock._is_instance_mock(self.service.call):
+            mock.patch.object(self.service, 'call', autospec=True).start()
+        self.service.call.return_value = image
+        image_meta = self.service.show(image_id)
+        self.service.call.assert_called_with('get', image_id)
         self.assertEqual(expected, image_meta)
 
     def test_show_makes_datetimes(self):
@@ -175,13 +176,13 @@ class TestGlanceImageService(base.TestCase):
     def test_show_raises_when_image_not_active(self):
         image_id = uuidutils.generate_uuid()
         image = self._make_fixture(name='image1', id=image_id, status="queued")
-        with mock.patch.object(self.service, 'call', return_value=image,
-                               autospec=True):
-            self.assertRaises(exception.ImageUnacceptable,
-                              self.service.show, image_id)
+        if not mock._is_instance_mock(self.service.call):
+            mock.patch.object(self.service, 'call', autospec=True).start()
+        self.service.call.return_value = image
+        self.assertRaises(exception.ImageUnacceptable,
+                          self.service.show, image_id)
 
-    @mock.patch.object(tenacity, 'retry', autospec=True)
-    def test_download_with_retries(self, mock_retry):
+    def test_download_with_retries(self):
         tries = [0]
 
         class MyGlanceStubClient(stubs.StubGlanceClient):
@@ -203,19 +204,20 @@ class TestGlanceImageService(base.TestCase):
         image_id = uuidutils.generate_uuid()
         writer = NullWriter()
 
-        # When retries are disabled, we should get an exception
-        self.config(num_retries=0, group='glance')
-        self.assertRaises(exception.GlanceConnectionFailed,
-                          stub_service.download, image_id, writer)
+        with mock.patch.object(tenacity, 'retry', autospec=True) as mock_retry:
+            # When retries are disabled, we should get an exception
+            self.config(num_retries=0, group='glance')
+            self.assertRaises(exception.GlanceConnectionFailed,
+                              stub_service.download, image_id, writer)
 
-        # Now lets enable retries. No exception should happen now.
-        self.config(num_retries=1, group='glance')
-        importlib.reload(image_service)
-        stub_service = image_service.GlanceImageService(stub_client,
-                                                        stub_context)
-        tries = [0]
-        stub_service.download(image_id, writer)
-        mock_retry.assert_called_once()
+            # Now lets enable retries. No exception should happen now.
+            self.config(num_retries=1, group='glance')
+            importlib.reload(image_service)
+            stub_service = image_service.GlanceImageService(stub_client,
+                                                            stub_context)
+            tries = [0]
+            stub_service.download(image_id, writer)
+            mock_retry.assert_called_once()
 
     def test_download_no_data(self):
         self.client.fake_wrapped = None
@@ -583,6 +585,62 @@ class TestGlanceSwiftTempURL(base.TestCase):
         self.config(swift_account=None, group='glance')
 
         path = ('/v1/AUTH_42/glance'
+                '/757274c4-2856-4bd2-bb20-9a4a231e187b')
+        tempurl_mock.return_value = (
+            path + '?temp_url_sig=hmacsig&temp_url_expires=1400001200')
+        auth_ref = swift_mock.return_value.auth.get_auth_ref.return_value
+        auth_ref.project_id = '42'
+
+        self.service._validate_temp_url_config = mock.Mock()
+
+        temp_url = self.service.swift_temp_url(image_info=self.fake_image)
+
+        self.assertEqual(CONF.glance.swift_endpoint_url
+                         + tempurl_mock.return_value,
+                         temp_url)
+        tempurl_mock.assert_called_with(
+            path=path,
+            seconds=CONF.glance.swift_temp_url_duration,
+            key=CONF.glance.swift_temp_url_key,
+            method='GET')
+        swift_mock.assert_called_once_with()
+
+    @mock.patch('ironic.common.swift.get_swift_session', autospec=True)
+    @mock.patch('swiftclient.utils.generate_temp_url', autospec=True)
+    def test_swift_temp_url_account_detected_with_prefix(self, tempurl_mock,
+                                                         swift_mock):
+        self.config(swift_account=None, group='glance')
+        self.config(swift_account_prefix='SWIFTPREFIX', group='glance')
+
+        path = ('/v1/SWIFTPREFIX_42/glance'
+                '/757274c4-2856-4bd2-bb20-9a4a231e187b')
+        tempurl_mock.return_value = (
+            path + '?temp_url_sig=hmacsig&temp_url_expires=1400001200')
+        auth_ref = swift_mock.return_value.auth.get_auth_ref.return_value
+        auth_ref.project_id = '42'
+
+        self.service._validate_temp_url_config = mock.Mock()
+
+        temp_url = self.service.swift_temp_url(image_info=self.fake_image)
+
+        self.assertEqual(CONF.glance.swift_endpoint_url
+                         + tempurl_mock.return_value,
+                         temp_url)
+        tempurl_mock.assert_called_with(
+            path=path,
+            seconds=CONF.glance.swift_temp_url_duration,
+            key=CONF.glance.swift_temp_url_key,
+            method='GET')
+        swift_mock.assert_called_once_with()
+
+    @mock.patch('ironic.common.swift.get_swift_session', autospec=True)
+    @mock.patch('swiftclient.utils.generate_temp_url', autospec=True)
+    def test_swift_temp_url_account_detected_with_prefix_underscore(
+            self, tempurl_mock, swift_mock):
+        self.config(swift_account=None, group='glance')
+        self.config(swift_account_prefix='SWIFTPREFIX_', group='glance')
+
+        path = ('/v1/SWIFTPREFIX_42/glance'
                 '/757274c4-2856-4bd2-bb20-9a4a231e187b')
         tempurl_mock.return_value = (
             path + '?temp_url_sig=hmacsig&temp_url_expires=1400001200')

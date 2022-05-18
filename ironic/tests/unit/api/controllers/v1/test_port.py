@@ -194,7 +194,8 @@ class TestPortsController__GetPortsCollection(base.TestCase):
         mock_request.context = 'fake-context'
         mock_list.return_value = []
         self.controller._get_ports_collection(None, None, None, None, None,
-                                              None, 'asc')
+                                              None, 'asc',
+                                              resource_url='ports')
         mock_list.assert_called_once_with('fake-context', 1000, None,
                                           project=None, sort_dir='asc',
                                           sort_key=None)
@@ -659,6 +660,9 @@ class TestListPorts(test_api_base.BaseApiTest):
             return True
         mock_authorize.side_effect = mock_authorize_function
 
+        another_node = obj_utils.create_test_node(
+            self.context, uuid=uuidutils.generate_uuid())
+
         ports = []
         # these ports should be retrieved by the API call
         for id_ in range(0, 2):
@@ -670,7 +674,8 @@ class TestListPorts(test_api_base.BaseApiTest):
         # these ports should NOT be retrieved by the API call
         for id_ in range(3, 5):
             port = obj_utils.create_test_port(
-                self.context, uuid=uuidutils.generate_uuid(),
+                self.context, node_id=another_node.id,
+                uuid=uuidutils.generate_uuid(),
                 address='52:54:00:cf:2d:3%s' % id_)
         data = self.get_json('/ports', headers={'X-Project-Id': '12345'})
         self.assertEqual(len(ports), len(data['ports']))
@@ -896,6 +901,8 @@ class TestListPorts(test_api_base.BaseApiTest):
                 node_id = self.node.id
             else:
                 node_id = 100000 + i
+                obj_utils.create_test_node(self.context, id=node_id,
+                                           uuid=uuidutils.generate_uuid())
             obj_utils.create_test_port(self.context,
                                        node_id=node_id,
                                        uuid=uuidutils.generate_uuid(),
@@ -920,6 +927,8 @@ class TestListPorts(test_api_base.BaseApiTest):
                 node_id = self.node.id
             else:
                 node_id = 100000 + i
+                obj_utils.create_test_node(self.context, id=node_id,
+                                           uuid=uuidutils.generate_uuid())
             obj_utils.create_test_port(self.context,
                                        node_id=node_id,
                                        uuid=uuidutils.generate_uuid(),
@@ -947,6 +956,8 @@ class TestListPorts(test_api_base.BaseApiTest):
                 node_id = self.node.id
             else:
                 node_id = 100000 + i
+                obj_utils.create_test_node(self.context, id=node_id,
+                                           uuid=uuidutils.generate_uuid())
             obj_utils.create_test_port(self.context,
                                        node_id=node_id,
                                        uuid=uuidutils.generate_uuid(),
@@ -1056,7 +1067,8 @@ class TestListPorts(test_api_base.BaseApiTest):
             return True
         mock_authorize.side_effect = mock_authorize_function
 
-        pg = obj_utils.create_test_portgroup(self.context)
+        pg = obj_utils.create_test_portgroup(self.context,
+                                             node_id=self.node.id)
         obj_utils.create_test_port(self.context, node_id=self.node.id,
                                    portgroup_id=pg.id)
         data = self.get_json('/ports/detail?portgroup=%s' % pg.uuid,
@@ -1093,7 +1105,7 @@ class TestListPorts(test_api_base.BaseApiTest):
                        autospec=True)
     def test_detail_with_incorrect_api_usage(self, mock_gpc):
         mock_gpc.return_value = api_port.list_convert_with_links(
-            [], 0)
+            [], 0, 'port')
         # GET /v1/ports/detail specifying node and node_uuid.  In this case
         # we expect the node_uuid interface to be used.
         self.get_json('/ports/detail?node=%s&node_uuid=%s' %

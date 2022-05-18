@@ -80,13 +80,8 @@ OPTIONAL_PROPERTIES = {
           "the IPv4 subnet mask that the storage network is configured to "
           "utilize, in a range between 1 and 31 inclusive. This is necessary "
           "for booting a node from a remote iSCSI volume. Optional."),
-    'kernel_append_params': _("Additional kernel parameters to pass down to "
-                              "instance kernel. These parameters can be "
-                              "consumed by the kernel or by the applications "
-                              "by reading /proc/cmdline. Mind severe cmdline "
-                              "size limit. Overrides "
-                              "[irmc]/kernel_append_params ironic "
-                              "option."),
+    'kernel_append_params': driver_utils.KERNEL_APPEND_PARAMS_DESCRIPTION %
+    {'option_group': 'irmc'},
 }
 
 COMMON_PROPERTIES = REQUIRED_PROPERTIES.copy()
@@ -288,20 +283,20 @@ def _prepare_boot_iso(task, root_uuid):
        for BIOS boot_mode failed.
     """
     deploy_info = _parse_deploy_info(task.node)
-    driver_internal_info = task.node.driver_internal_info
 
     # fetch boot iso
     if deploy_info.get('boot_iso'):
         boot_iso_href = deploy_info['boot_iso']
         if _is_image_href_ordinary_file_name(boot_iso_href):
-            driver_internal_info['boot_iso'] = boot_iso_href
+            task.node.set_driver_internal_info('boot_iso', boot_iso_href)
         else:
             boot_iso_filename = _get_iso_name(task.node, label='boot')
             boot_iso_fullpathname = os.path.join(
                 CONF.irmc.remote_image_share_root, boot_iso_filename)
             images.fetch(task.context, boot_iso_href, boot_iso_fullpathname)
 
-            driver_internal_info['boot_iso'] = boot_iso_filename
+            task.node.set_driver_internal_info('boot_iso',
+                                               boot_iso_filename)
 
     # create boot iso
     else:
@@ -329,10 +324,10 @@ def _prepare_boot_iso(task, root_uuid):
                                kernel_params=kernel_params,
                                boot_mode=boot_mode)
 
-        driver_internal_info['boot_iso'] = boot_iso_filename
+        task.node.set_driver_internal_info('boot_iso',
+                                           boot_iso_filename)
 
     # save driver_internal_info['boot_iso']
-    task.node.driver_internal_info = driver_internal_info
     task.node.save()
 
 
@@ -971,13 +966,7 @@ class IRMCVirtualMediaBoot(base.BootInterface, IRMCVolumeBootMixIn):
         :raises: IRMCOperationError, if some operation on iRMC fails.
         """
 
-        # NOTE(TheJulia): If this method is being called by something
-        # aside from deployment, clean and rescue, such as conductor takeover,
-        # we should treat this as a no-op and move on otherwise we would
-        # modify the state of the node due to virtual media operations.
-        if task.node.provision_state not in (states.DEPLOYING,
-                                             states.CLEANING,
-                                             states.RESCUING):
+        if not driver_utils.need_prepare_ramdisk(task.node):
             return
 
         # NOTE(tiendc): Before deploying, we need to backup BIOS config
@@ -1047,8 +1036,8 @@ class IRMCVirtualMediaBoot(base.BootInterface, IRMCVolumeBootMixIn):
             manager_utils.node_set_boot_device(task, boot_devices.DISK,
                                                persistent=True)
         else:
-            driver_internal_info = node.driver_internal_info
-            root_uuid_or_disk_id = driver_internal_info['root_uuid_or_disk_id']
+            root_uuid_or_disk_id = node.driver_internal_info[
+                'root_uuid_or_disk_id']
             self._configure_vmedia_boot(task, root_uuid_or_disk_id)
 
         # Enable secure boot, if being requested
@@ -1073,11 +1062,9 @@ class IRMCVirtualMediaBoot(base.BootInterface, IRMCVolumeBootMixIn):
         boot_mode_utils.deconfigure_secure_boot_if_needed(task)
 
         _remove_share_file(_get_iso_name(task.node, label='boot'))
-        driver_internal_info = task.node.driver_internal_info
-        driver_internal_info.pop('boot_iso', None)
-        driver_internal_info.pop('irmc_boot_iso', None)
+        task.node.del_driver_internal_info('boot_iso')
+        task.node.del_driver_internal_info('irmc_boot_iso')
 
-        task.node.driver_internal_info = driver_internal_info
         task.node.save()
         _cleanup_vmedia_boot(task)
 

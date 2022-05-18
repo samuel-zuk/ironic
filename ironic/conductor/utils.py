@@ -33,6 +33,7 @@ from ironic.common import boot_devices
 from ironic.common import exception
 from ironic.common import faults
 from ironic.common.i18n import _
+from ironic.common import images
 from ironic.common import network
 from ironic.common import nova
 from ironic.common import states
@@ -248,8 +249,8 @@ def _can_skip_state_change(task, new_state):
     except Exception as e:
         with excutils.save_and_reraise_exception():
             error = _(
-                "Failed to change power state to '%(target)s'. "
-                "Error: %(error)s") % {'target': new_state, 'error': e}
+                "Failed to change power state to '%(target)s': %(error)s") % {
+                    'target': new_state, 'error': e}
             node_history_record(node, event=error, error=True)
             node['target_power_state'] = states.NOSTATE
             node.save()
@@ -331,7 +332,7 @@ def node_power_action(task, new_state, timeout=None):
             node['target_power_state'] = states.NOSTATE
             error = _(
                 "Failed to change power state to '%(target_state)s' "
-                "by '%(new_state)s'. Error: %(error)s") % {
+                "by '%(new_state)s': %(error)s") % {
                     'target_state': target_state,
                     'new_state': new_state,
                     'error': e}
@@ -364,7 +365,7 @@ def node_power_action(task, new_state, timeout=None):
                 task.driver.storage.detach_volumes(task)
             except exception.StorageError as e:
                 LOG.warning("Volume detachment for node %(node)s "
-                            "failed. Error: %(error)s",
+                            "failed: %(error)s",
                             {'node': node.uuid, 'error': e})
 
 
@@ -1538,8 +1539,8 @@ def node_change_boot_mode(task, target_boot_mode):
                    'class': type(exc).__name__, 'exc': exc},
                   exc_info=not isinstance(exc, exception.IronicException))
         task.node.last_error = (
-            "Failed to change boot mode to '%(target)s'. "
-            "Error: %(err)s" % {'target': target_boot_mode, 'err': exc})
+            "Failed to change boot mode to '%(target)s: %(err)s" % {
+                'target': target_boot_mode, 'err': exc})
         task.node.save()
     else:
         LOG.info("Changed boot_mode to %(mode)s for node %(node)s",
@@ -1586,8 +1587,8 @@ def node_change_secure_boot(task, secure_boot_target):
                    'class': type(exc).__name__, 'exc': exc},
                   exc_info=not isinstance(exc, exception.IronicException))
         task.node.last_error = (
-            "Failed to change secure_boot state to '%(target)s'. "
-            "Error: %(err)s" % {'target': secure_boot_target, 'err': exc})
+            "Failed to change secure_boot state to '%(target)s': %(err)s" % {
+                'target': secure_boot_target, 'err': exc})
         task.node.save()
     else:
         LOG.info("Changed secure_boot state to %(state)s for node %(node)s",
@@ -1649,3 +1650,45 @@ def node_history_record(node, conductor=None, event=None,
             severity=error and "ERROR" or "INFO",
             event=event,
             event_type=event_type or "UNKNOWN").create()
+
+
+def update_image_type(context, node):
+    """Updates is_whole_disk_image and image_type based on the node data.
+
+    :param context: Request context.
+    :param node: Node object.
+    :return: True if any changes have been done, else False.
+    """
+    iwdi = images.is_whole_disk_image(context, node.instance_info)
+    if iwdi is None:
+        return False
+
+    node.set_driver_internal_info('is_whole_disk_image', iwdi)
+    # We need to gradually phase out is_whole_disk_image in favour of
+    # image_type, so make sure to set it as well. The primary use case is to
+    # cache information detected from Glance or the presence of kernel/ramdisk.
+    node.set_instance_info(
+        'image_type',
+        images.IMAGE_TYPE_WHOLE_DISK if iwdi else images.IMAGE_TYPE_PARTITION)
+    return True
+
+
+def exclude_current_conductor(current_conductor, offline_conductors):
+    """Wrapper to exclude current conductor from offline_conductors
+
+    In some cases the current conductor may have failed to update
+    the heartbeat timestamp due to failure or resource starvation.
+    When this occurs the dbapi get_offline_conductors method will
+    include the current conductor in its return value.
+
+    :param current_conductor: id or hostname of the current conductor
+    :param offline_conductors: List of offline conductors.
+    :return: List of offline conductors, excluding current conductor
+    """
+    if current_conductor in offline_conductors:
+        LOG.warning('Current conductor %s will be excluded from offline '
+                    'conductors. Conductor heartbeat has failed to update the '
+                    'database timestamp. This is sign of resource starvation.',
+                    current_conductor)
+
+    return [x for x in offline_conductors if x != current_conductor]

@@ -2,9 +2,8 @@
     templates:
       - check-requirements
       - openstack-cover-jobs
-      - openstack-lower-constraints-master-branch-jobs
-      - openstack-python3-yoga-jobs
-      - openstack-python3-yoga-jobs-arm64
+      - openstack-python3-zed-jobs
+      - openstack-python3-zed-jobs-arm64
       - periodic-stable-jobs
       - publish-openstack-docs-pti
       - release-notes-jobs-python3
@@ -18,11 +17,11 @@
         - ironic-grenade
         - ironic-standalone
         - ironic-standalone-redfish
-        - ironic-tempest-partition-bios-redfish-pxe
-        - ironic-tempest-partition-uefi-redfish-vmedia
+        - ironic-tempest-bios-redfish-netboot
+        - ironic-tempest-uefi-redfish-vmedia
         - ironic-tempest-wholedisk-bios-snmp-pxe
-        - ironic-tempest-ipa-partition-pxe_ipmitool
-        - ironic-tempest-ipa-partition-uefi-pxe_ipmitool
+        - ironic-tempest-partition-bios-ipmi-pxe
+        - ironic-tempest-partition-uefi-ipmi-pxe
         # NOTE(TheJulia) Marking multinode non-voting on 20210311
         # Due to a high failure rate on limestone where the compute1
         # machine never appears to be able to communicate across the
@@ -45,6 +44,8 @@
             voting: false
         - ironic-tempest-ipa-wholedisk-bios-ipmi-direct-dib:
             voting: false
+        - ironic-tempest-ipxe-ipv6:
+            voting: false
         - ironic-inspector-tempest-rbac-scope-enforced:
             voting: false
         - bifrost-integration-tinyipa-ubuntu-focal:
@@ -64,11 +65,11 @@
         - ironic-grenade
         - ironic-standalone
         - ironic-standalone-redfish
-        - ironic-tempest-partition-bios-redfish-pxe
-        - ironic-tempest-partition-uefi-redfish-vmedia
+        - ironic-tempest-bios-redfish-netboot
+        - ironic-tempest-uefi-redfish-vmedia
         - ironic-tempest-wholedisk-bios-snmp-pxe
-        - ironic-tempest-ipa-partition-pxe_ipmitool
-        - ironic-tempest-ipa-partition-uefi-pxe_ipmitool
+        - ironic-tempest-partition-bios-ipmi-pxe
+        - ironic-tempest-partition-uefi-ipmi-pxe
         # NOTE(TheJulia): Disabled multinode on 20210311 due to Limestone
         # seeming to be 
         # - ironic-tempest-ipa-wholedisk-direct-tinyipa-multinode
@@ -80,8 +81,6 @@
       jobs:
         # TODO(dtantsur): these jobs are useful but currently hopelessly
         # broken. Fix them and bring back to the gate.
-        - ironic-tempest-ipxe-ipv6:
-            voting: false
         - ironic-grenade-multinode-multitenant:
             voting: false
         - ironic-inspector-tempest-discovery-fast-track:

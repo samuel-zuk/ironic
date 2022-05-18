@@ -217,9 +217,9 @@ IRONIC_ENABLED_BOOT_INTERFACES=${IRONIC_ENABLED_BOOT_INTERFACES:-"fake,ipxe"}
 IRONIC_ENABLED_CONSOLE_INTERFACES=${IRONIC_ENABLED_CONSOLE_INTERFACES:-"fake,no-console"}
 IRONIC_ENABLED_DEPLOY_INTERFACES=${IRONIC_ENABLED_DEPLOY_INTERFACES:-"fake,direct,ramdisk"}
 IRONIC_ENABLED_INSPECT_INTERFACES=${IRONIC_ENABLED_INSPECT_INTERFACES:-"fake,no-inspect"}
-IRONIC_ENABLED_MANAGEMENT_INTERFACES=${IRONIC_ENABLED_MANAGEMENT_INTERFACES:-"fake,ipmitool,noop"}
+IRONIC_ENABLED_MANAGEMENT_INTERFACES=${IRONIC_ENABLED_MANAGEMENT_INTERFACES:-""}
 IRONIC_ENABLED_NETWORK_INTERFACES=${IRONIC_ENABLED_NETWORK_INTERFACES:-"flat,noop"}
-IRONIC_ENABLED_POWER_INTERFACES=${IRONIC_ENABLED_POWER_INTERFACES:-"fake,ipmitool"}
+IRONIC_ENABLED_POWER_INTERFACES=${IRONIC_ENABLED_POWER_INTERFACES:-""}
 IRONIC_ENABLED_RAID_INTERFACES=${IRONIC_ENABLED_RAID_INTERFACES:-"fake,agent,no-raid"}
 IRONIC_ENABLED_RESCUE_INTERFACES=${IRONIC_ENABLED_RESCUE_INTERFACES:-"fake,no-rescue"}
 IRONIC_ENABLED_STORAGE_INTERFACES=${IRONIC_ENABLED_STORAGE_INTERFACES:-"fake,cinder,noop"}
@@ -344,7 +344,7 @@ if [[ -z "$IRONIC_DIB_RAMDISK_OPTIONS" ]]; then
     if [[ "$IRONIC_DIB_RAMDISK_OS" == "centos8" ]]; then
         # Adapt for DIB naming change
         IRONIC_DIB_RAMDISK_OS=centos
-        IRONIC_DIB_RAMDISK_RELEASE=8
+        IRONIC_DIB_RAMDISK_RELEASE=8-stream
     fi
     IRONIC_DIB_RAMDISK_OPTIONS="$IRONIC_DIB_RAMDISK_OS"
 fi
@@ -500,7 +500,7 @@ else
     # loopback cannot be used for v6 testing.
         IRONIC_HOST_IPV6='fc00::1'
     else
-        IRONIC_HOST_IPV6=$SERVICE_HOST
+        IRONIC_HOST_IPV6=$HOST_IPV6
     fi
     IRONIC_PROVISION_SUBNET_GATEWAY=${IRONIC_PROVISION_SUBNET_GATEWAY:-'fc01::1'}
     IRONIC_PROVISION_SUBNET_SUBNODE_IP=${IRONIC_PROVISION_SUBNET_SUBNODE_IP:-'fc01::2'}
@@ -1282,7 +1282,7 @@ function configure_ironic_dirs {
                 if [ -f /usr/share/ipxe/ipxe-snponly-x86_64.efi ]; then
                     # NOTE(TheJulia): I think this file got renamed at some
                     # point during it's centos8 run, but this is current.
-                    update_loader_copy_paths snponly.efi:/usr/share/ipxe/ipxe_snponly-x86_64.efi
+                    update_loader_copy_paths snponly.efi:/usr/share/ipxe/ipxe-snponly-x86_64.efi
                 fi
             fi
             if [ -f $IRONIC_GRUB2_SHIM_FILE ]; then
@@ -1342,7 +1342,7 @@ function configure_ironic_rescue_network {
 }
 
 function configure_ironic_provision_network {
-    if [[ "$IP_VERSION" == "6" ]]; then
+    if [[ "$IRONIC_IP_VERSION" == "6" ]]; then
         # NOTE(TheJulia): Ideally we should let this happen
         # with our global address, but iPXE seems to have in
         # consistant behavior in this configuration with devstack.
@@ -1402,9 +1402,11 @@ function configure_ironic_provision_network {
                 --gateway $IRONIC_PROVISION_SUBNET_GATEWAY --network $net_id \
                 --subnet-range $IRONIC_PROVISION_SUBNET_PREFIX -f value -c id)"
         else
+            # NOTE(TheJulia): Consider changing this to stateful to support UEFI once we move
+            # CI to Ubuntu Jammy as it will support v6 and v4 UEFI firmware driven boot ops.
             subnet_id="$(openstack --os-cloud $OS_CLOUD subnet create --ip-version 6 \
-                --ipv6-address-mode dhcpv6-stateful \
-                --ipv6-ra-mode dhcpv6-stateful \
+                --ipv6-address-mode dhcpv6-stateless \
+                --ipv6-ra-mode dhcpv6-stateless \
                 --dns-nameserver 2001:4860:4860::8888 \
                 ${net_segment_id:+--network-segment $net_segment_id} \
                 $IRONIC_PROVISION_PROVIDER_SUBNET_NAME \
@@ -1712,18 +1714,7 @@ function configure_ironic_conductor {
         fi
     done
 
-    if is_deployed_by_redfish; then
-        # TODO(lucasagomes): We need to make it easier to configure
-        # specific driver interfaces in DevStack
-        iniset $IRONIC_CONF_FILE DEFAULT enabled_power_interfaces "redfish"
-        iniset $IRONIC_CONF_FILE DEFAULT enabled_management_interfaces "redfish"
-    fi
-
     if is_deployed_by_snmp; then
-        # TODO(lucasagomes): We need to make it easier to configure
-        # specific driver interfaces in DevStack
-        iniset $IRONIC_CONF_FILE DEFAULT enabled_power_interfaces "snmp"
-        iniset $IRONIC_CONF_FILE DEFAULT enabled_management_interfaces "noop"
         iniset $IRONIC_CONF_FILE pxe enable_netboot_fallback True
     fi
 
@@ -2786,6 +2777,9 @@ function build_tinyipa_ramdisk {
         export AUTHORIZE_SSH=true
         export SSH_PUBLIC_KEY=$IRONIC_ANSIBLE_SSH_KEY.pub
     fi
+    if [ -e $DEST/ironic-lib ]; then
+        export IRONIC_LIB_SOURCE="$DEST/ironic-lib"
+    fi
     make
     cp tinyipa.gz $ramdisk_path
     cp tinyipa.vmlinuz $kernel_path
@@ -2836,9 +2830,10 @@ function build_ipa_dib_ramdisk {
         install_diskimage_builder
     fi
 
-    if -e $DEST/ironic-lib; then
+    if [ -e $DEST/ironic-lib ]; then
         export IRONIC_LIB_FROM_SOURCE=true
         export DIB_REPOLOCATION_ironic_lib=$DEST/ironic-lib
+        export DIB_REPOREF_ironic_lib=$TARGET_BRANCH
     fi
 
     echo "Building IPA ramdisk with DIB options: $IRONIC_DIB_RAMDISK_OPTIONS"
@@ -2850,7 +2845,9 @@ function build_ipa_dib_ramdisk {
         DIB_DHCP_TIMEOUT=$IRONIC_DIB_DHCP_TIMEOUT \
         DIB_RELEASE=$IRONIC_DIB_RAMDISK_RELEASE \
         DIB_REPOLOCATION_ironic_python_agent="$IRONIC_PYTHON_AGENT_DIR" \
+        DIB_REPOREF_ironic_python_agent=$TARGET_BRANCH \
         DIB_REPOLOCATION_requirements="$DEST/requirements" \
+        DIB_REPOREF_requirements=$TARGET_BRANCH \
         disk-image-create "$IRONIC_DIB_RAMDISK_OPTIONS" \
         -x -o  "$tempdir/ironic-agent" \
         ironic-python-agent-ramdisk
@@ -2861,6 +2858,46 @@ function build_ipa_dib_ramdisk {
         mv "$tempdir/ironic-agent.iso" "$iso_path"
     fi
     rm -rf $tempdir
+}
+
+function upload_image_if_needed {
+    if [[ "$IRONIC_PARTITIONED_IMAGE_NAME" =~ cirros ]] && is_service_enabled glance; then
+        echo Building a Cirros image suitable for local boot
+
+        local dest
+        IRONIC_PARTITIONED_IMAGE_NAME=cirros-${CIRROS_VERSION}-x86_64-partition
+        dest="$IRONIC_DATA_DIR/$IRONIC_PARTITIONED_IMAGE_NAME.img"
+
+        # Export some variables that the script is using.
+        CIRROS_ARCH=$CIRROS_ARCH CIRROS_VERSION=$CIRROS_VERSION \
+            IRONIC_TTY_DEV=$IRONIC_TTY_DEV VERBOSE=$VERBOSE \
+            $IRONIC_SCRIPTS_DIR/cirros-partition.sh "$dest"
+
+        # TODO(dtantsur): stop uploading kernel/ramdisk when image_type support
+        # lands.
+        local kernel_id
+        kernel_id=$(openstack image list -f value -c ID -c Name \
+            | awk '/cirros.*kernel/ { print $1; exit 0; }')
+        die_if_not_set $LINENO kernel_id "Cannot find cirros kernel"
+
+        local ramdisk_id
+        ramdisk_id=$(openstack image list -f value -c ID -c Name \
+            | awk '/cirros.*ramdisk/ { print $1; exit 0; }')
+        die_if_not_set $LINENO ramdisk_id "Cannot find cirros ramdisk"
+
+        openstack image create $IRONIC_PARTITIONED_IMAGE_NAME \
+            --public --disk-format raw --container-format bare \
+            --property kernel_id=$kernel_id --property ramdisk_id=$ramdisk_id \
+            --file "$dest"
+
+        # Change the default image only if the provided settings prevent the
+        # default cirros image from working.
+        if [[ "$IRONIC_TEMPEST_WHOLE_DISK_IMAGE" != True \
+                && "$IRONIC_DEFAULT_BOOT_OPTION" == local ]]; then
+            IRONIC_IMAGE_NAME=$IRONIC_PARTITIONED_IMAGE_NAME
+            DEFAULT_IMAGE_NAME=$IRONIC_IMAGE_NAME
+        fi
+    fi
 }
 
 # download EFI boot loader image and upload it to glance
@@ -3041,6 +3078,8 @@ function prepare_baremetal_basic_ops {
         upload_baremetal_ironic_efiboot
     fi
 
+    upload_image_if_needed
+
     configure_tftpd
     configure_iptables
 }
@@ -3163,6 +3202,13 @@ function ironic_configure_tempest {
         iniset $TEMPEST_CONFIG baremetal partition_image_ref $image_uuid
     fi
 
+    # Our cirros images cannot do local boot in legacy mode.
+    if [[ "${IRONIC_PARTITIONED_IMAGE_NAME}" =~ cirros && "${IRONIC_BOOT_MODE}" == "bios" ]]; then
+        iniset $TEMPEST_CONFIG baremetal partition_netboot True
+    else
+        iniset $TEMPEST_CONFIG baremetal partition_netboot False
+    fi
+
     if [[ "$IRONIC_IP_VERSION" == "6" ]]; then
         iniset $TEMPEST_CONFIG baremetal whole_disk_image_url "http://$IRONIC_HOST_IPV6:$IRONIC_HTTP_PORT/${IRONIC_WHOLEDISK_IMAGE_NAME}.img"
     else
@@ -3184,6 +3230,8 @@ function ironic_configure_tempest {
     iniset $TEMPEST_CONFIG baremetal default_rescue_interface $IRONIC_DEFAULT_RESCUE_INTERFACE
     # Driver for API tests
     iniset $TEMPEST_CONFIG baremetal driver fake-hardware
+
+    iniset $TEMPEST_CONFIG baremetal default_boot_option $IRONIC_DEFAULT_BOOT_OPTION
 
     local adjusted_root_disk_size_gb
     if [[ "$IRONIC_IS_HARDWARE" == "False" ]]; then
@@ -3231,7 +3279,11 @@ function get_ironic_node_prefix {
 }
 
 function setup_vxlan_network {
+    sudo ip link add phy-brbm-infra type bridge
+    sudo ip link set dev phy-brbm-infra up
     sudo ovs-vsctl add-port $IRONIC_VM_NETWORK_BRIDGE phy-brbm-infra
+    sudo ip link add phy-infra-brbm type bridge
+    sudo ip link set dev phy-infra-brbm up
     sudo ovs-vsctl add-port $PUBLIC_BRIDGE phy-infra-brbm
     sudo ovs-vsctl set interface phy-brbm-infra type=patch
     sudo ovs-vsctl set interface phy-infra-brbm type=patch

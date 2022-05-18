@@ -1859,12 +1859,15 @@ class ServiceDoNodeDeployTestCase(mgr_utils.ServiceSetUpMixin,
         # exc_info[1]
         self.assertIn(r'node 1be26c0b-03f2-4d2e-ae87-c02d7f33c123',
                       str(exc.exc_info[1]))
+        node.refresh()
         # This is a sync operation last_error should be None.
         self.assertIsNone(node.last_error)
         # Verify reservation has been cleared.
         self.assertIsNone(node.reservation)
         mock_iwdi.assert_called_once_with(self.context, node.instance_info)
-        self.assertNotIn('is_whole_disk_image', node.driver_internal_info)
+        # The image type must be set for validation to actually work
+        self.assertFalse(node.driver_internal_info['is_whole_disk_image'])
+        self.assertEqual('partition', node.instance_info['image_type'])
 
     @mock.patch('ironic.drivers.modules.fake.FakeDeploy.validate',
                 autospec=True)
@@ -3410,6 +3413,7 @@ class MiscTestCase(mgr_utils.ServiceSetUpMixin, mgr_utils.CommonMixIn,
             self.context, driver='fake-hardware',
             target_raid_config=target_raid_config,
             network_interface='noop')
+        expected_info = dict(node.instance_info, image_type='partition')
         ret = self.service.validate_driver_interfaces(self.context,
                                                       node.uuid)
         expected = {'console': {'result': True},
@@ -3424,7 +3428,7 @@ class MiscTestCase(mgr_utils.ServiceSetUpMixin, mgr_utils.CommonMixIn,
                     'rescue': {'result': True},
                     'bios': {'result': True}}
         self.assertEqual(expected, ret)
-        mock_iwdi.assert_called_once_with(self.context, node.instance_info)
+        mock_iwdi.assert_called_once_with(self.context, expected_info)
 
     @mock.patch.object(fake.FakeDeploy, 'validate', autospec=True)
     @mock.patch.object(images, 'is_whole_disk_image', autospec=True)
@@ -3435,11 +3439,12 @@ class MiscTestCase(mgr_utils.ServiceSetUpMixin, mgr_utils.CommonMixIn,
                                           network_interface='noop')
         reason = 'fake reason'
         mock_val.side_effect = exception.InvalidParameterValue(reason)
+        expected_info = dict(node.instance_info, image_type='partition')
         ret = self.service.validate_driver_interfaces(self.context,
                                                       node.uuid)
         self.assertFalse(ret['deploy']['result'])
         self.assertEqual(reason, ret['deploy']['reason'])
-        mock_iwdi.assert_called_once_with(self.context, node.instance_info)
+        mock_iwdi.assert_called_once_with(self.context, expected_info)
 
     @mock.patch.object(fake.FakeDeploy, 'validate', autospec=True)
     @mock.patch.object(images, 'is_whole_disk_image', autospec=True)
@@ -3447,6 +3452,7 @@ class MiscTestCase(mgr_utils.ServiceSetUpMixin, mgr_utils.CommonMixIn,
             self, mock_iwdi, mock_val):
         node = obj_utils.create_test_node(self.context, driver='fake-hardware')
         mock_val.side_effect = Exception('boom')
+        expected_info = dict(node.instance_info, image_type='whole-disk')
         ret = self.service.validate_driver_interfaces(self.context,
                                                       node.uuid)
         reason = ('Unexpected exception, traceback saved '
@@ -3454,8 +3460,7 @@ class MiscTestCase(mgr_utils.ServiceSetUpMixin, mgr_utils.CommonMixIn,
                   'that is running on test-host: boom')
         self.assertFalse(ret['deploy']['result'])
         self.assertEqual(reason, ret['deploy']['reason'])
-
-        mock_iwdi.assert_called_once_with(self.context, node.instance_info)
+        mock_iwdi.assert_called_once_with(self.context, expected_info)
 
     @mock.patch.object(images, 'is_whole_disk_image', autospec=True)
     def test_validate_driver_interfaces_validation_fail_instance_traits(
@@ -3463,6 +3468,7 @@ class MiscTestCase(mgr_utils.ServiceSetUpMixin, mgr_utils.CommonMixIn,
         mock_iwdi.return_value = False
         node = obj_utils.create_test_node(self.context, driver='fake-hardware',
                                           network_interface='noop')
+        expected_info = dict(node.instance_info, image_type='partition')
         with mock.patch(
                 'ironic.conductor.utils.validate_instance_info_traits',
                 autospec=True) as ii_traits:
@@ -3472,7 +3478,7 @@ class MiscTestCase(mgr_utils.ServiceSetUpMixin, mgr_utils.CommonMixIn,
                                                           node.uuid)
             self.assertFalse(ret['deploy']['result'])
             self.assertEqual(reason, ret['deploy']['reason'])
-            mock_iwdi.assert_called_once_with(self.context, node.instance_info)
+        mock_iwdi.assert_called_once_with(self.context, expected_info)
 
     @mock.patch.object(images, 'is_whole_disk_image', autospec=True)
     def test_validate_driver_interfaces_validation_fail_deploy_templates(
@@ -3480,6 +3486,7 @@ class MiscTestCase(mgr_utils.ServiceSetUpMixin, mgr_utils.CommonMixIn,
         mock_iwdi.return_value = False
         node = obj_utils.create_test_node(self.context, driver='fake-hardware',
                                           network_interface='noop')
+        expected_info = dict(node.instance_info, image_type='partition')
         with mock.patch(
                 'ironic.conductor.steps'
                 '.validate_user_deploy_steps_and_templates',
@@ -3490,7 +3497,7 @@ class MiscTestCase(mgr_utils.ServiceSetUpMixin, mgr_utils.CommonMixIn,
                                                           node.uuid)
             self.assertFalse(ret['deploy']['result'])
             self.assertEqual(reason, ret['deploy']['reason'])
-            mock_iwdi.assert_called_once_with(self.context, node.instance_info)
+        mock_iwdi.assert_called_once_with(self.context, expected_info)
 
     @mock.patch.object(manager.ConductorManager, '_fail_if_in_state',
                        autospec=True)
@@ -4982,6 +4989,15 @@ class ManagerDoSyncPowerStateTestCase(db_base.DbTestCase):
         self.assertFalse(self.power.validate.called)
         self.power.get_power_state.assert_called_once_with(self.task)
         self.assertEqual('fake-power', self.node.power_state)
+        self.assertFalse(node_power_action.called)
+        self.assertFalse(self.task.upgrade_lock.called)
+
+    def test_state_unchanged_for_fake_node(self, node_power_action):
+        self._do_sync_power_state(None, None)
+
+        self.power.validate.assert_called_once_with(self.task)
+        self.power.get_power_state.assert_called_once_with(self.task)
+        self.assertIsNone(self.node.power_state)
         self.assertFalse(node_power_action.called)
         self.assertFalse(self.task.upgrade_lock.called)
 
@@ -6502,6 +6518,8 @@ class NodeInspectHardware(mgr_utils.ServiceSetUpMixin, db_base.DbTestCase):
         self.assertTrue(mock_inspect.called)
 
 
+@mock.patch.object(conductor_utils, 'node_history_record',
+                   mock.Mock(spec=conductor_utils.node_history_record))
 @mock.patch.object(task_manager, 'acquire', autospec=True)
 @mock.patch.object(manager.ConductorManager, '_mapped_to_this_conductor',
                    autospec=True)
@@ -8179,7 +8197,7 @@ class DoNodeInspectAbortTestCase(mgr_utils.CommonMixIn,
                           "abort")
         node.refresh()
         self.assertTrue(mock_log.exception.called)
-        self.assertIn('Failed to abort inspection.', node.last_error)
+        self.assertIn('Failed to abort inspection', node.last_error)
 
     @mock.patch('ironic.drivers.modules.fake.FakeInspect.abort', autospec=True)
     @mock.patch('ironic.conductor.task_manager.acquire', autospec=True)
@@ -8207,30 +8225,33 @@ class NodeHistoryRecordCleanupTestCase(mgr_utils.ServiceSetUpMixin,
 
     def setUp(self):
         super(NodeHistoryRecordCleanupTestCase, self).setUp()
-        self.node1 = obj_utils.get_test_node(self.context,
-                                             driver='fake-hardware',
-                                             id=10,
-                                             uuid=uuidutils.generate_uuid(),
-                                             conductor_affinity=1)
-        self.node2 = obj_utils.get_test_node(self.context,
-                                             driver='fake-hardware',
-                                             id=11,
-                                             uuid=uuidutils.generate_uuid(),
-                                             conductor_affinity=1)
-        self.node3 = obj_utils.get_test_node(self.context,
-                                             driver='fake-hardware',
-                                             id=12,
-                                             uuid=uuidutils.generate_uuid(),
-                                             conductor_affinity=1)
+        CONF.set_override('node_history_max_entries', 2, group='conductor')
+        CONF.set_override('node_history_cleanup_batch_count', 2,
+                          group='conductor')
+        self._start_service()
+        self.node1 = obj_utils.get_test_node(
+            self.context,
+            driver='fake-hardware',
+            id=10,
+            uuid=uuidutils.generate_uuid(),
+            conductor_affinity=self.service.conductor.id)
+        self.node2 = obj_utils.get_test_node(
+            self.context,
+            driver='fake-hardware',
+            id=11,
+            uuid=uuidutils.generate_uuid(),
+            conductor_affinity=self.service.conductor.id)
+        self.node3 = obj_utils.get_test_node(
+            self.context,
+            driver='fake-hardware',
+            id=12,
+            uuid=uuidutils.generate_uuid(),
+            conductor_affinity=self.service.conductor.id)
         self.nodes = [self.node1, self.node2, self.node3]
         # Create the nodes, as the tasks need to operate across tables.
         self.node1.create()
         self.node2.create()
         self.node3.create()
-        CONF.set_override('node_history_max_entries', 2, group='conductor')
-        CONF.set_override('node_history_cleanup_batch_count', 2,
-                          group='conductor')
-        self._start_service()
 
     def test_history_is_pruned_to_config(self):
         for node in self.nodes:
@@ -8305,11 +8326,12 @@ class NodeHistoryRecordCleanupTestCase(mgr_utils.ServiceSetUpMixin,
         self.assertEqual(1, len(events))
 
     def test_history_pruning_not_other_conductor(self):
+        another_conductor = obj_utils.create_test_conductor(self.context)
         node = obj_utils.get_test_node(self.context,
                                        driver='fake-hardware',
                                        id=33,
                                        uuid=uuidutils.generate_uuid(),
-                                       conductor_affinity=2)
+                                       conductor_affinity=another_conductor.id)
         # create node so it can be queried
         node.create()
         for i in range(0, 3):

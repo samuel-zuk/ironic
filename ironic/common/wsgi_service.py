@@ -10,6 +10,9 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+import socket
+
+from ironic_lib import utils as il_utils
 from oslo_concurrency import processutils
 from oslo_service import service
 from oslo_service import wsgi
@@ -34,10 +37,12 @@ class WSGIService(service.ServiceBase):
             the options that specify how this server should be run.
         :returns: None
         """
+        app_conf = CONF[conf_section]
+
         self.name = name
         self.app = app
         self.workers = (
-            CONF[conf_section].api_workers
+            app_conf.api_workers
             # NOTE(dtantsur): each worker takes a substantial amount of memory,
             # so we don't want to end up with dozens of them.
             or min(processutils.get_worker_count(), _MAX_DEFAULT_WORKERS)
@@ -47,10 +52,18 @@ class WSGIService(service.ServiceBase):
                 _("api_workers value of %d is invalid, "
                   "must be greater than 0.") % self.workers)
 
-        self.server = wsgi.Server(CONF, name, self.app,
-                                  host=CONF[conf_section].host_ip,
-                                  port=CONF[conf_section].port,
-                                  use_ssl=CONF[conf_section].enable_ssl_api)
+        if ('unix_socket' in app_conf.keys() and app_conf.unix_socket):
+            il_utils.unlink_without_raise(app_conf.unix_socket)
+            self.server = wsgi.Server(CONF, name, self.app,
+                                      socket_family=socket.AF_UNIX,
+                                      socket_file=app_conf.unix_socket,
+                                      socket_mode=app_conf.unix_socket_mode,
+                                      use_ssl=app_conf.enable_ssl_api)
+        else:
+            self.server = wsgi.Server(CONF, name, self.app,
+                                      host=app_conf.host_ip,
+                                      port=app_conf.port,
+                                      use_ssl=app_conf.enable_ssl_api)
 
     def start(self):
         """Start serving this service using loaded configuration.
@@ -65,6 +78,8 @@ class WSGIService(service.ServiceBase):
         :returns: None
         """
         self.server.stop()
+        if CONF.api.unix_socket:
+            il_utils.unlink_without_raise(CONF.unix_socket)
 
     def wait(self):
         """Wait for the service to stop serving this API.

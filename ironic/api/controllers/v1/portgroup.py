@@ -113,8 +113,7 @@ def convert_with_links(rpc_portgroup, fields=None, sanitize=True):
     return portgroup
 
 
-def list_convert_with_links(rpc_portgroups, limit, url=None, fields=None,
-                            **kwargs):
+def list_convert_with_links(rpc_portgroups, limit, url, fields=None, **kwargs):
     return collection.list_convert_with_links(
         items=[convert_with_links(p, fields=fields, sanitize=False)
                for p in rpc_portgroups],
@@ -287,6 +286,7 @@ class PortgroupsController(pecan.rest.RestController):
                                                marker, limit,
                                                sort_key, sort_dir,
                                                fields=fields,
+                                               resource_url='portgroups',
                                                detail=detail,
                                                project=project)
 
@@ -330,10 +330,9 @@ class PortgroupsController(pecan.rest.RestController):
         if parent != "portgroups":
             raise exception.HTTPNotFound()
 
-        resource_url = '/'.join(['portgroups', 'detail'])
         return self._get_portgroups_collection(
             node, address, marker, limit, sort_key, sort_dir,
-            resource_url=resource_url, project=project)
+            resource_url='portgroups/detail', project=project)
 
     @METRICS.timer('PortgroupsController.get_one')
     @method.expose()

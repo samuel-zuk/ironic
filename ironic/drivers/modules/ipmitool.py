@@ -962,20 +962,18 @@ def _constructor_checks(driver):
 
 def _allocate_port(task, host=None):
     node = task.node
-    dii = node.driver_internal_info or {}
     allocated_port = console_utils.acquire_port(host=host)
-    dii['allocated_ipmi_terminal_port'] = allocated_port
-    node.driver_internal_info = dii
+    node.set_driver_internal_info('allocated_ipmi_terminal_port',
+                                  allocated_port)
     node.save()
     return allocated_port
 
 
 def _release_allocated_port(task):
     node = task.node
-    dii = node.driver_internal_info or {}
-    allocated_port = dii.pop('allocated_ipmi_terminal_port', None)
+    allocated_port = node.del_driver_internal_info(
+        'allocated_ipmi_terminal_port')
     if allocated_port:
-        node.driver_internal_info = dii
         node.save()
         console_utils.release_port(allocated_port)
 
@@ -1169,7 +1167,7 @@ class IPMIManagement(base.ManagementInterface):
             LOG.info('For node %(node_uuid)s, '
                      'driver_info[\'ipmi_disable_boot_timeout\'] is set '
                      'to False, so not sending ipmi boot-timeout-disable',
-                     {'node_uuid', task.node.uuid})
+                     {'node_uuid': task.node.uuid})
 
         ifbd = task.node.driver_info.get('ipmi_force_boot_device', False)
         if strutils.bool_from_string(ifbd):
@@ -1255,16 +1253,18 @@ class IPMIManagement(base.ManagementInterface):
 
         """
         driver_info = task.node.driver_info
-        driver_internal_info = task.node.driver_internal_info
+        node = task.node
         ifbd = driver_info.get('ipmi_force_boot_device', False)
 
         driver_info = _parse_driver_info(task.node)
 
         if (strutils.bool_from_string(ifbd)
-                and driver_internal_info.get('persistent_boot_device')
-                and driver_internal_info.get('is_next_boot_persistent', True)):
+                and node.driver_internal_info.get('persistent_boot_device')
+                and node.driver_internal_info.get('is_next_boot_persistent',
+                                                  True)):
             return {
-                'boot_device': driver_internal_info['persistent_boot_device'],
+                'boot_device': node.driver_internal_info[
+                    'persistent_boot_device'],
                 'persistent': True
             }
 
@@ -1560,6 +1560,13 @@ class IPMIShellinaboxConsole(IPMIConsole):
         if not driver_info['port']:
             driver_info['port'] = _allocate_port(task)
 
+        try:
+            self._exec_stop_console(driver_info)
+        except OSError:
+            # We need to drop any existing sol sessions with sol deactivate.
+            # OSError is raised when sol session is already deactivated,
+            # so we can ignore it.
+            pass
         self._start_console(driver_info,
                             console_utils.start_shellinabox_console)
 
@@ -1576,6 +1583,10 @@ class IPMIShellinaboxConsole(IPMIConsole):
             ironic_utils.unlink_without_raise(
                 _console_pwfile_path(task.node.uuid))
         _release_allocated_port(task)
+
+    def _exec_stop_console(self, driver_info):
+        cmd = "sol deactivate"
+        _exec_ipmitool(driver_info, cmd, check_exit_code=[0, 1])
 
     @METRICS.timer('IPMIShellinaboxConsole.get_console')
     def get_console(self, task):
