@@ -221,3 +221,52 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
                                     session_id,
                                     headers={})
             self.assertEqual(resp.status_code, 403)
+
+
+class RedfishProxySessionDisabledTests(base.RedfishProxyTestCase):
+    """Tests asserting that SessionService requests fail when not enabled."""
+
+    def setUp(self):
+        # Patch the keystone middleware and keystone Session objects
+        # to return dummy values
+        mw_patch = patch('keystonemiddleware.auth_token.AuthProtocol',
+                         utils.FakeKeystoneMiddleware)
+        self.fake_middleware = mw_patch.start()
+        sess_patch = patch('keystoneauth1.session.Session',
+                           utils.FakeKeystoneClientSession)
+        self.fake_session = sess_patch.start()
+        self.addCleanup(mw_patch.stop)
+        self.addCleanup(sess_patch.stop)
+        super(RedfishProxySessionDisabledTests, self).setUp()
+
+    def _set_cfg_opts(self):
+        super(RedfishProxySessionDisabledTests, self)._set_cfg_opts()
+        CONF.set_override('auth_strategy', 'noauth')
+
+    def test_get_sessionservice_info_disabled(self):
+        resp = self.http_get('/redfish/v1/SessionService',
+                             headers={'X-Auth-Token': FAKE_CREDS['TOKEN']})
+        self.assertEqual(resp.status_code, 404)
+
+    def test_get_current_session_disabled(self):
+        resp = self.http_get('/redfish/v1/SessionService/Sessions/%s' %
+                             FAKE_CREDS['TOKEN_ID'],
+                             headers={'X-Auth-Token': FAKE_CREDS['TOKEN']})
+        self.assertEqual(resp.status_code, 404)
+
+    def test_get_all_sessions_disabled(self):
+        resp = self.http_get('/redfish/v1/SessionService/Sessions',
+                             headers={'X-Auth-Token': FAKE_CREDS['TOKEN']})
+        self.assertEqual(resp.status_code, 404)
+
+    def test_delete_session_disabled(self):
+        resp = self.http_delete('/redfish/v1/SessionService/Sessions/%s' %
+                                FAKE_CREDS['TOKEN_ID'],
+                                headers={'X-Auth-Token': FAKE_CREDS['TOKEN']})
+        self.assertEqual(resp.status_code, 404)
+
+    def test_authentication_disabled(self):
+        auth = {'UserName': FAKE_CREDS['APP_CRED_ID'],
+                'Password': FAKE_CREDS['APP_CRED_SECRET']}
+        resp = self.http_post('/redfish/v1/SessionService/Sessions', data=auth)
+        self.assertEqual(resp.status_code, 404)
