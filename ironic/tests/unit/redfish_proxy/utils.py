@@ -14,12 +14,14 @@ import keystoneauth1.exceptions as ks_exceptions
 from oslo_config import cfg
 
 from ironic.conf import CONF
+import ironic.common.exception as ir_exceptions
 
 
 FAKE_CREDS = {'APP_CRED_ID': 'im-a-uuid-haha',
               'APP_CRED_SECRET': 'hunter2',
               'TOKEN_ID': 'dQw4w9WgXcQ',
-              'TOKEN': 'im-a-token-lol'}
+              'TOKEN': 'im-a-token-lol',
+              'NODE_OWNER': 'mario'}
 
 
 class FakeKeystoneClientSession(object):
@@ -88,3 +90,21 @@ class FakeKeystoneMiddleware(object):
 
     def __call__(self, env, start_response, *args, **kwargs):
         return self.app(env, start_response)
+
+
+class Singleton(type):
+    _instance = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args,
+                                                                 **kwargs)
+        return cls._instances[cls]
+
+
+class FakeNode(object):
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def list(self, *args, **kwargs):
+        pass

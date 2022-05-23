@@ -18,6 +18,7 @@ from flask import g
 from flask import jsonify
 from flask import make_response
 from flask import request
+from oslo_policy import policy as oslo_policy
 
 from ironic.common import exception
 from ironic.common import states as ir_states
@@ -38,7 +39,7 @@ def systems_collection_info():
     # Ensure the user is allowed by policy to list baremetal nodes.
     try:
         project = proxy_utils.check_list_policy(g.context, object_type='node')
-    except Exception:
+    except (exception.HTTPForbidden, oslo_policy.InvalidScope):
         abort(403)
 
     # Query the DB to get the list of nodes to be returned.
@@ -120,11 +121,7 @@ def set_system_power_state(node_uuid):
     if request.is_json:
         body = request.get_json()
     else:
-        try:
-            body = json.loads(
-                list(request.form.to_dict().keys())[0])
-        except json.JSONDecodeError:
-            abort(400)
+        abort(400)
 
     # Ensure the ResetType is specified and valid, get the corresponding
     # target Ironic power state to be sent with the RPC call.
