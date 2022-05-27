@@ -10,8 +10,6 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-import json
-
 from flask import abort
 from flask import Blueprint
 from flask import g
@@ -51,9 +49,8 @@ def systems_collection_info():
         '@odata.type': '#ComputerSystemCollection.ComputerSystemCollection',
         'Name': 'Ironic Node Collection',
         'Members@odata.count': len(node_list),
-        'Members': list(map(
-            (lambda node: {'@odata.id': '/redfish/v1/Systems/%s' % node.uuid}),
-            node_list)),
+        'Members': [{'@odata.id': '/redfish/v1/Systems/%s' % node.uuid}
+                    for node in node_list],
         '@odata.id': '/redfish/v1/Systems'
     })
 
@@ -91,8 +88,8 @@ def system_info(node_uuid):
                     'ForceOn',
                     'ForceOff',
                     'ForceRestart',
-                    'GracefulRestart',
-                    'GracefulShutdown'
+                    'GracefulShutdown',
+                    'GracefulRestart'
                 ]
             }
         },
@@ -130,8 +127,6 @@ def set_system_power_state(node_uuid):
             body['ResetType'])
     except (KeyError, ValueError):
         abort(400)
-    except Exception:
-        raise
 
     # Ensure the user is allowed by policy to access this node.
     try:
@@ -146,12 +141,13 @@ def set_system_power_state(node_uuid):
     if node.provision_state in (ir_states.CLEANWAIT, ir_states.CLEANING):
         abort(400)
 
-    # Make the RPC call.
-    topic = g.rpcapi.get_topic_for(node)
-    g.rpcapi.change_node_power_state(g.context,
-                                     node.uuid,
-                                     target_state,
-                                     timeout=None,
-                                     topic=topic)
+    if node.power_state != target_state:
+        # Make the RPC call.
+        topic = g.rpcapi.get_topic_for(node)
+        g.rpcapi.change_node_power_state(g.context,
+                                         node.uuid,
+                                         target_state,
+                                         timeout=None,
+                                         topic=topic)
 
     return make_response(('', 204))

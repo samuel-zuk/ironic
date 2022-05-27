@@ -13,15 +13,17 @@
 import keystoneauth1.exceptions as ks_exceptions
 from oslo_config import cfg
 
+import ironic.common.states as ir_states
 from ironic.conf import CONF
-import ironic.common.exception as ir_exceptions
 
 
-FAKE_CREDS = {'APP_CRED_ID': 'im-a-uuid-haha',
+FAKE_CREDS = {'APP_CRED_ID': 'dc95dc97-0880-4bfb-815d-08234dfa07e8',
               'APP_CRED_SECRET': 'hunter2',
               'TOKEN_ID': 'dQw4w9WgXcQ',
-              'TOKEN': 'im-a-token-lol',
-              'NODE_OWNER': 'mario'}
+              'TOKEN': 'super-secret-token-shhhhh',
+              'NODE_UUID': '3b0060e4-f4d7-4078-9559-e356702bc1f6',
+              'NODE_OWNER': 'mario',
+              'NODE_PROJECT': 'mario-party'}
 
 
 class FakeKeystoneClientSession(object):
@@ -92,19 +94,16 @@ class FakeKeystoneMiddleware(object):
         return self.app(env, start_response)
 
 
-class Singleton(type):
-    _instance = {}
-
-    def __call__(cls, *args, **kwargs):
-        if cls not in cls._instances:
-            cls._instances[cls] = super(Singleton, cls).__call__(*args,
-                                                                 **kwargs)
-        return cls._instances[cls]
-
-
 class FakeNode(object):
-    def __init__(self, *args, **kwargs):
-        pass
+    def __init__(self, uuid=FAKE_CREDS['NODE_UUID'],
+                 power_state=ir_states.POWER_ON,
+                 provision_state=ir_states.ENROLL,
+                 name=None, desc=None):
+        self.uuid = uuid
+        self.power_state = power_state
+        self.provision_state = provision_state
+        self.name = name
+        self.description = desc
 
-    def list(self, *args, **kwargs):
-        pass
+    def __call__(self, *args, **kwargs):
+        return self

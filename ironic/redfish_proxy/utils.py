@@ -19,6 +19,24 @@ from ironic.common import states as ir_states
 from ironic import objects
 
 
+IRONIC_REDFISH_POWER_STATE_MAP = {
+    ir_states.POWER_ON: 'On',
+    ir_states.POWER_OFF: 'Off',
+    ir_states.REBOOT: 'Reset',
+    ir_states.SOFT_REBOOT: 'Reset'
+}
+
+
+REDFISH_IRONIC_TARGET_STATE_MAP = {
+    'On': ir_states.POWER_ON,
+    'ForceOn': ir_states.POWER_ON,
+    'ForceOff': ir_states.POWER_OFF,
+    'ForceRestart': ir_states.REBOOT,
+    'GracefulShutdown': ir_states.SOFT_POWER_OFF,
+    'GracefulRestart': ir_states.SOFT_REBOOT
+}
+
+
 def ironic_to_redfish_power_state(node_power_state):
     """Converts an Ironic node power state to a Redfish System power state.
 
@@ -30,16 +48,8 @@ def ironic_to_redfish_power_state(node_power_state):
     """
     if node_power_state is None:
         return 'Unknown'
-
-    redfish_states = {
-        ir_states.POWER_ON: 'On',
-        ir_states.POWER_OFF: 'Off',
-        ir_states.REBOOT: 'Reset',
-        ir_states.SOFT_REBOOT: 'Reset'
-    }
-
     try:
-        return redfish_states[node_power_state]
+        return IRONIC_REDFISH_POWER_STATE_MAP[node_power_state]
     except KeyError:
         raise ValueError('Invalid node power state "%s"' % node_power_state)
 
@@ -54,18 +64,8 @@ def redfish_reset_type_to_ironic_power_state(target_state):
     """
     if not target_state:
         raise ValueError('Target power state must not be None')
-
-    ironic_states = {
-        'On': ir_states.POWER_ON,
-        'ForceOn': ir_states.POWER_ON,
-        'GracefulShutdown': ir_states.SOFT_POWER_OFF,
-        'ForceOff': ir_states.POWER_OFF,
-        'GracefulRestart': ir_states.SOFT_REBOOT,
-        'ForceRestart': ir_states.REBOOT
-    }
-
     try:
-        return ironic_states[target_state]
+        return REDFISH_IRONIC_TARGET_STATE_MAP[target_state]
     except KeyError:
         raise ValueError('Invalid node power state "%s"' % target_state)
 
