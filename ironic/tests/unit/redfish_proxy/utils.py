@@ -10,11 +10,7 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-import keystoneauth1.exceptions as ks_exceptions
-from oslo_config import cfg
-
 import ironic.common.states as ir_states
-from ironic.conf import CONF
 
 
 FAKE_CREDS = {'APP_CRED_ID': 'dc95dc97-0880-4bfb-815d-08234dfa07e8',
@@ -26,69 +22,19 @@ FAKE_CREDS = {'APP_CRED_ID': 'dc95dc97-0880-4bfb-815d-08234dfa07e8',
               'NODE_PROJECT': 'mario-party'}
 
 
-class FakeKeystoneClientSession(object):
-    """An object that simulates a keystoneauth1 Session for use with tests."""
-    def __init__(self, auth={}, *args, **kwargs):
-        if auth.__class__.__name__ == 'ApplicationCredential':
-            auth_info = auth.auth_methods[0]
-            self.app_cred_id = auth_info.application_credential_id
-            self.app_cred_secret = auth_info.application_credential_secret
-        elif auth.__class__.__name__ == 'Token':
-            self.token = auth.token
+class FakeResponse(object):
+    def __init__(self, data={}, status_code=200):
+        self.data = data
+        self.status_code = status_code
 
-    def get_auth_headers(self, *args, **kwargs):
-        # We assume if get_auth_headers is called, the session was initialized
-        # with an ApplicationCredential as the auth parameter.
-        if self.app_cred_id != FAKE_CREDS['APP_CRED_ID']:
-            raise ks_exceptions.http.NotFound()
-        if self.app_cred_secret != FAKE_CREDS['APP_CRED_SECRET']:
-            raise ks_exceptions.http.Unauthorized()
-
-        return {'X-Auth-Token': FAKE_CREDS['TOKEN']}
-
-    def get(self, url, headers={}, *args, **kwargs):
-        # We assume if get gis being called, we are using a session token.
-        if '/auth/tokens' not in url:
-            raise ks_exceptions.http.NotFound()
-        if headers['X-Subject-Token'] != FAKE_CREDS['TOKEN']:
-            raise ks_exceptions.http.Unauthorized()
-
-        # The info the SessionService expects to receive.
-        resp = {
-            'token': {
-                'audit_ids': [FAKE_CREDS['TOKEN_ID']],
-                'application_credential': {'id': FAKE_CREDS['APP_CRED_ID']}
-            }
-        }
-        return self.FakeResponse(resp)
-
-    def delete(self, url, headers={}, *args, **kwargs):
-        # We assume if get gis being called, we are using a session token.
-        if '/auth/tokens' not in url:
-            raise ks_exceptions.http.NotFound()
-        if headers['X-Subject-Token'] != FAKE_CREDS['TOKEN']:
-            raise ks_exceptions.http.Unauthorized()
-
-        return self.FakeResponse(status_code=204)
-
-    class FakeResponse(object):
-        def __init__(self, data={}, status_code=200):
-            self.data = data
-            self.status_code = status_code
-
-        def json(self):
-            return self.data
+    def json(self):
+        return self.data
 
 
-class FakeKeystoneMiddleware(object):
-    """Middleware that does nothing for use with tests requiring Keystone."""
+class FakeMiddleware(object):
+    """Middleware that does nothing for use with tests requiring auth."""
     def __init__(self, app, *args, **kwargs):
         self.app = app
-        # Keystone middleware sets this value upon initialization and our
-        # SessionService code expects it so we set it here.
-        CONF.register_opt(cfg.StrOpt('auth_url',
-                                     default='http://localhost'),
-                          group='keystone_authtoken')
 
     def __call__(self, env, start_response, *args, **kwargs):
         return self.app(env, start_response)

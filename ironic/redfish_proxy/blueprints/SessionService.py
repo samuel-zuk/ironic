@@ -67,8 +67,7 @@ def session_collection_info():
     try:
         token_info = sess.get(auth_url + '/auth/tokens',
                               headers={'X-Subject-Token': auth_token}).json()
-    except (ks_exceptions.auth.AuthorizationFailure,
-            ks_exceptions.http.Unauthorized):
+    except ks_exceptions.http.Unauthorized:
         abort(403)
     token_id = token_info['token']['audit_ids'][0]
 
@@ -118,8 +117,7 @@ def session_auth():
     sess = session.Session(auth=auth)
     try:
         auth_token = sess.get_auth_headers()['X-Auth-Token']
-    except (ks_exceptions.auth.AuthorizationFailure,
-            ks_exceptions.http.Unauthorized,
+    except (ks_exceptions.http.Unauthorized,
             ks_exceptions.http.NotFound):
         abort(403)
 
@@ -166,8 +164,7 @@ def session_info(sess_id):
     try:
         token_info = sess.get(auth_url + '/auth/tokens',
                               headers={'X-Subject-Token': auth_token}).json()
-    except (ks_exceptions.auth.AuthorizationFailure,
-            ks_exceptions.http.Unauthorized):
+    except ks_exceptions.http.Unauthorized:
         abort(403)
 
     token_id = token_info['token']['audit_ids'][0]
@@ -207,11 +204,10 @@ def end_session(sess_id):
     try:
         token_info = sess.get(auth_url + '/auth/tokens',
                               headers={'X-Subject-Token': auth_token}).json()
-    except (ks_exceptions.auth.AuthorizationFailure,
-            ks_exceptions.http.Unauthorized):
+    except ks_exceptions.http.Unauthorized:
         abort(403)
-    token_id = token_info['token']['audit_ids'][0]
 
+    token_id = token_info['token']['audit_ids'][0]
     if token_id != sess_id:
         raise exception.SessionNotFound(sess_id=sess_id)
 
