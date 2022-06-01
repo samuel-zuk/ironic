@@ -15,7 +15,7 @@ from uuid import uuid4 as generate_uuid
 
 from oslo_policy.policy import InvalidScope
 
-import ironic.common.exception as ir_exceptions
+import ironic.common.exception as ir_exception
 import ironic.common.states as ir_states
 from ironic.conf import CONF
 from ironic.objects.node import Node
@@ -155,19 +155,27 @@ class RedfishProxySystemsTests(base.RedfishProxyTestCase):
     @mock.patch.object(proxy_utils, 'check_list_policy', autospec=True)
     def test_get_systems_unauthorized(self, mock_list_policy, mock_node_list):
         """Tests that listing nodes fails when user lacks permissions."""
-        mock_list_policy.side_effect = ir_exceptions.HTTPForbidden()
+        mock_list_policy.side_effect = (
+            ir_exception.HTTPForbidden(resource='node'))
         mock_node_list.return_value = [utils.FakeNode()]
 
         resp = self.http_get('/redfish/v1/Systems')
         mock_list_policy.assert_called_once()
         mock_node_list.assert_not_called()
         self.assertEqual(resp.status_code, 403)
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 403)
+        self.assertEqual(err['title'], 'Forbidden')
+        self.assertEqual('Access was denied to the following resource: node',
+                         err['message'])
 
     @mock.patch.object(Node, 'list', autospec=True)
     @mock.patch.object(proxy_utils, 'check_list_policy', autospec=True)
     def test_get_systems_invalid_scope(self, mock_list_policy, mock_node_list):
         """Tests that listing nodes fails when user is improperly scoped."""
-        mock_list_policy.side_effect = InvalidScope('node:get', 'user', 'none')
+        mock_list_policy.side_effect = InvalidScope('node:get', 'root', 'none')
         mock_node_list.return_value = [utils.FakeNode()]
         resp = self.http_get('/redfish/v1/Systems')
 
@@ -175,26 +183,69 @@ class RedfishProxySystemsTests(base.RedfishProxyTestCase):
         mock_node_list.assert_not_called()
         self.assertEqual(resp.status_code, 403)
 
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 403)
+        self.assertEqual(err['title'], 'Forbidden')
+        self.assertEqual('node:get requires a scope of root, request was made '
+                         'with none scope.', err['message'])
+
     @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
                        autospec=True)
     def test_get_system_invalid_uuid(self, mock_node_policy_retrieve):
         """Tests that node info queries fail when the given UUID is invalid."""
-        mock_node_policy_retrieve.side_effect = ir_exceptions.NodeNotFound()
-        resp = self.http_get('/redfish/v1/Systems/foo-bar')
+        invalid_uuid = 'bingus'
+        mock_node_policy_retrieve.side_effect = (
+            ir_exception.InvalidUUID(uuid=invalid_uuid))
+        resp = self.http_get('/redfish/v1/Systems/%s' % invalid_uuid)
+
+        mock_node_policy_retrieve.assert_called_once()
+        self.assertEqual(resp.status_code, 400)
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 400)
+        self.assertEqual(err['title'], 'Bad Request')
+        self.assertEqual('Expected a UUID but received %s.' % invalid_uuid,
+                         err['message'])
+
+    @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
+                       autospec=True)
+    def test_get_system_node_not_found(self, mock_node_policy_retrieve):
+        """Tests that node info queries fail when node is nonexistent."""
+        fake_uuid = generate_uuid()
+        mock_node_policy_retrieve.side_effect = (
+            ir_exception.NodeNotFound(node=fake_uuid))
+        resp = self.http_get('/redfish/v1/Systems/%s' % fake_uuid)
 
         mock_node_policy_retrieve.assert_called_once()
         self.assertEqual(resp.status_code, 404)
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 404)
+        self.assertEqual(err['title'], 'Not Found')
+        self.assertEqual('Node %s could not be found.' % fake_uuid,
+                         err['message'])
 
     @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
                        autospec=True)
     def test_get_system_unauthorized(self, mock_node_policy_retrieve):
         """Tests that node info queries fail when user lacks permissions."""
-        mock_node_policy_retrieve.side_effect = ir_exceptions.HTTPForbidden()
+        mock_node_policy_retrieve.side_effect = (
+            ir_exception.HTTPForbidden(resource='node'))
         resp = self.http_get('/redfish/v1/Systems/%s' %
                              FAKE_CREDS['NODE_UUID'])
 
         mock_node_policy_retrieve.assert_called_once()
         self.assertEqual(resp.status_code, 403)
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 403)
+        self.assertEqual(err['title'], 'Forbidden')
+        self.assertEqual('Access was denied to the following resource: node',
+                         err['message'])
 
     @mock.patch('ironic.conductor.rpcapi.ConductorAPI', autospec=True)
     @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
@@ -202,7 +253,8 @@ class RedfishProxySystemsTests(base.RedfishProxyTestCase):
     def test_change_power_state_unauthorized(self, mock_node_policy_retrieve,
                                              mock_rpcapi):
         """Tests that power state requests fail when user lacks permissions."""
-        mock_node_policy_retrieve.side_effect = ir_exceptions.HTTPForbidden()
+        mock_node_policy_retrieve.side_effect = (
+            ir_exception.HTTPForbidden(resource='node'))
         resp = self.http_post('/redfish/v1/Systems/%s/Actions/'
                               'ComputerSystem.Reset' % FAKE_CREDS['NODE_UUID'],
                               data={'ResetType': 'ForceOff'})
@@ -211,20 +263,36 @@ class RedfishProxySystemsTests(base.RedfishProxyTestCase):
         mock_rpcapi.change_node_power_state.assert_not_called()
         self.assertEqual(resp.status_code, 403)
 
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 403)
+        self.assertEqual(err['title'], 'Forbidden')
+        self.assertEqual('Access was denied to the following resource: node',
+                         err['message'])
+
     @mock.patch('ironic.conductor.rpcapi.ConductorAPI', autospec=True)
     @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
                        autospec=True)
     def test_change_power_state_invalid_uuid(self, mock_node_policy_retrieve,
                                              mock_rpcapi):
         """Tests that power state requests for an invalid node fail."""
-        mock_node_policy_retrieve.side_effect = ir_exceptions.NodeNotFound()
-        resp = self.http_post('/redfish/v1/Systems/foo-bar/Actions/'
-                              'ComputerSystem.Reset',
+        fake_uuid = generate_uuid()
+        mock_node_policy_retrieve.side_effect = (
+            ir_exception.NodeNotFound(node=fake_uuid))
+        resp = self.http_post('/redfish/v1/Systems/%s/Actions/'
+                              'ComputerSystem.Reset' % fake_uuid,
                               data={'ResetType': 'ForceOff'})
 
         mock_node_policy_retrieve.assert_called_once()
         mock_rpcapi.change_node_power_state.assert_not_called()
         self.assertEqual(resp.status_code, 404)
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 404)
+        self.assertEqual(err['title'], 'Not Found')
+        self.assertEqual('Node %s could not be found.' % fake_uuid,
+                         err['message'])
 
     @mock.patch('ironic.conductor.rpcapi.ConductorAPI', autospec=True)
     @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
@@ -241,6 +309,13 @@ class RedfishProxySystemsTests(base.RedfishProxyTestCase):
         mock_rpcapi.change_node_power_state.assert_not_called()
         self.assertEqual(resp.status_code, 400)
 
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 400)
+        self.assertEqual(err['title'], 'Bad Request')
+        self.assertEqual('DoABackflip is not a valid Redfish ResetType.',
+                         err['message'])
+
     @mock.patch('ironic.conductor.rpcapi.ConductorAPI', autospec=True)
     @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
                        autospec=True)
@@ -255,6 +330,13 @@ class RedfishProxySystemsTests(base.RedfishProxyTestCase):
         mock_node_policy_retrieve.assert_not_called()
         mock_rpcapi.change_node_power_state.assert_not_called()
         self.assertEqual(resp.status_code, 400)
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 400)
+        self.assertEqual(err['title'], 'Bad Request')
+        self.assertEqual('Expected value for field(s) "ResetType" in request '
+                         'body.', err['message'])
 
     @mock.patch('ironic.conductor.rpcapi.ConductorAPI', autospec=True)
     @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
@@ -271,6 +353,13 @@ class RedfishProxySystemsTests(base.RedfishProxyTestCase):
         mock_rpcapi.change_node_power_state.assert_not_called()
         self.assertEqual(resp.status_code, 400)
 
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 400)
+        self.assertEqual(err['title'], 'Bad Request')
+        self.assertEqual('Expected request to be in JSON form.',
+                         err['message'])
+
     @mock.patch('ironic.conductor.rpcapi.ConductorAPI', autospec=True)
     @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
                        autospec=True)
@@ -285,7 +374,16 @@ class RedfishProxySystemsTests(base.RedfishProxyTestCase):
 
         mock_node_policy_retrieve.assert_called_once()
         mock_rpcapi.change_node_power_state.assert_not_called()
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 409)
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 409)
+        self.assertEqual(err['title'], 'Conflict')
+        self.assertEqual('The requested action "power off" can not be '
+                         'performed on node "%s" while it is in state "%s".' %
+                         (FAKE_CREDS['NODE_UUID'], ir_states.CLEANING),
+                         err['message'])
 
     @mock.patch('ironic.conductor.rpcapi.ConductorAPI', autospec=True)
     @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
@@ -301,4 +399,71 @@ class RedfishProxySystemsTests(base.RedfishProxyTestCase):
 
         mock_node_policy_retrieve.assert_called_once()
         mock_rpcapi.change_node_power_state.assert_not_called()
-        self.assertEqual(resp.status_code, 400)
+        self.assertEqual(resp.status_code, 409)
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 409)
+        self.assertEqual(err['title'], 'Conflict')
+        self.assertEqual('The requested action "power off" can not be '
+                         'performed on node "%s" while it is in state "%s".' %
+                         (FAKE_CREDS['NODE_UUID'], ir_states.CLEANWAIT),
+                         err['message'])
+
+    @mock.patch('ironic.conductor.rpcapi.ConductorAPI', autospec=True)
+    @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
+                       autospec=True)
+    def test_change_power_state_rpcapi_error(self, mock_node_policy_retrieve,
+                                             mock_rpcapi):
+        """Tests handling power state requests when there is a RPCAPI error."""
+        mock_node_policy_retrieve.return_value = utils.FakeNode()
+        mock_rpcapi.return_value = mock_rpcapi
+        mock_rpcapi.change_node_power_state.side_effect = (
+            ir_exception.NoFreeConductorWorker())
+        resp = self.http_post('/redfish/v1/Systems/%s/Actions/'
+                              'ComputerSystem.Reset' % FAKE_CREDS['NODE_UUID'],
+                              data={'ResetType': 'ForceOff'})
+
+        mock_node_policy_retrieve.assert_called_once()
+        mock_rpcapi.assert_called()
+        mock_rpcapi.get_topic_for.assert_called_once()
+        mock_rpcapi.change_node_power_state.assert_called_once()
+        self.assertEqual(resp.status_code, 503)
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 503)
+        self.assertEqual(err['title'], 'Service Unavailable')
+        self.assertEqual('Requested action cannot be performed due to lack of '
+                         'free conductor workers.',
+                         err['message'])
+
+    @mock.patch('ironic.conductor.rpcapi.ConductorAPI', autospec=True)
+    @mock.patch.object(proxy_utils, 'check_node_policy_and_retrieve',
+                       autospec=True)
+    def test_change_power_state_node_locked(self, mock_node_policy_retrieve,
+                                            mock_rpcapi):
+        mock_node_policy_retrieve.return_value = utils.FakeNode()
+        mock_rpcapi.return_value = mock_rpcapi
+        mock_rpcapi.change_node_power_state.side_effect = (
+            ir_exception.NodeLocked(node=FAKE_CREDS['NODE_UUID'],
+                                    host='System'))
+
+        resp = self.http_post('/redfish/v1/Systems/%s/Actions/'
+                              'ComputerSystem.Reset' % FAKE_CREDS['NODE_UUID'],
+                              data={'ResetType': 'ForceOff'})
+
+        mock_node_policy_retrieve.assert_called_once()
+        mock_rpcapi.assert_called()
+        mock_rpcapi.get_topic_for.assert_called_once()
+        mock_rpcapi.change_node_power_state.assert_called_once()
+        self.assertEqual(resp.status_code, 409)
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 409)
+        self.assertEqual(err['title'], 'Conflict')
+        self.assertEqual('Node %s is locked by host %s, please retry after '
+                         'the current operation is completed.' %
+                         (FAKE_CREDS['NODE_UUID'], 'System'),
+                         err['message'])

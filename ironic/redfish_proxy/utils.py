@@ -59,15 +59,13 @@ def redfish_reset_type_to_ironic_power_state(target_state):
 
     :param: target_state: the ResetType specified by the Redfish client
 
-    :raises: ValueError if the ResetType is unspecified or invalid
+    :raises: InvalidRedfishResetType if the ResetType is unspecified or invalid
     :return: the target Ironic power state that corresponds to the ResetType
     """
-    if not target_state:
-        raise ValueError('Target power state must not be None')
     try:
         return REDFISH_IRONIC_TARGET_STATE_MAP[target_state]
     except KeyError:
-        raise ValueError('Invalid node power state "%s"' % target_state)
+        raise exception.InvalidRedfishResetType(rtype=target_state)
 
 
 def check_list_policy(context, object_type, owner=None):
@@ -198,6 +196,8 @@ def get_rpc_node_by_uuid(context, node_ident):
     # as a UUID.
     if uuidutils.is_uuid_like(node_ident):
         return objects.Node.get_by_uuid(context, node_ident)
+    else:
+        raise exception.InvalidUUID(uuid=node_ident)
 
     # Ensure we raise the same exception as we did for the Juno release.
     raise exception.NodeNotFound(node=node_ident)

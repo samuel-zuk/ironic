@@ -16,12 +16,12 @@ from flask import current_app
 from flask import jsonify
 from flask import make_response
 from flask import request
-import keystoneauth1.exceptions as ks_exceptions
+import keystoneauth1.exceptions as ks_exception
 from keystoneauth1.identity import v3
 from keystoneauth1 import session
 from keystoneauth1 import token_endpoint
 
-from ironic.common import exception
+import ironic.common.exception as ir_exception
 
 
 SessionService = Blueprint('SessionService', __name__)
@@ -55,20 +55,16 @@ def session_collection_info():
     Session's URI, returning this as the sole Collection member. The identifier
     to be used shall be the Keystone token's audit ID.
     """
-    auth_url = current_app.config['keystone_authtoken']['auth_url']
-    try:
-        auth_token = request.headers['X-Auth-Token']
-    except KeyError:
-        abort(403)
+    if 'X-Auth-Token' not in request.headers.keys():
+        raise ir_exception.MissingToken()
 
     # Query the identity service to get the token's audit ID.
+    auth_url = current_app.config['keystone_authtoken']['auth_url']
+    auth_token = request.headers['X-Auth-Token']
     auth = token_endpoint.Token(endpoint=auth_url, token=auth_token)
     sess = session.Session(auth=auth)
-    try:
-        token_info = sess.get(auth_url + '/auth/tokens',
-                              headers={'X-Subject-Token': auth_token}).json()
-    except ks_exceptions.http.Unauthorized:
-        abort(403)
+    token_info = sess.get(auth_url + '/auth/tokens',
+                          headers={'X-Subject-Token': auth_token}).json()
     token_id = token_info['token']['audit_ids'][0]
 
     return jsonify({
@@ -92,34 +88,33 @@ def session_auth():
     in the response body and the token itself in the X-Auth-Token response
     header field.
     """
-    body = {}
-    auth_url = current_app.config['keystone_authtoken']['auth_url']
-
     # Check if the POST request body is json.
+    body = {}
     if request.is_json:
         body = request.get_json()
     else:
-        abort(400)
+        raise ir_exception.RequestNotJSON()
 
     # Ensure that both required fields are present.
     if not body:
-        abort(400)
+        raise ir_exception.MissingRequestField(field='UserName, Password')
     for field in ('UserName', 'Password'):
-        if field not in body.keys():
-            raise exception.MissingCredential(field_name=field)
+        if field not in body.keys() or body[field] is None:
+            raise ir_exception.MissingRequestField(field=field)
 
     # Use the provided credentials to attempt to fetch a new token.
+    auth_url = current_app.config['keystone_authtoken']['auth_url']
     auth = v3.application_credential.ApplicationCredential(
         auth_url=auth_url,
         application_credential_id=body['UserName'],
         application_credential_secret=body['Password']
     )
     sess = session.Session(auth=auth)
+
     try:
         auth_token = sess.get_auth_headers()['X-Auth-Token']
-    except (ks_exceptions.http.Unauthorized,
-            ks_exceptions.http.NotFound):
-        abort(403)
+    except ks_exception.http.NotFound:
+        raise ks_exception.http.Unauthorized()
 
     # Query the Identity service to get the audit ID of the new token.
     token_info = sess.get(auth_url + '/auth/tokens',
@@ -151,27 +146,22 @@ def session_info(sess_id):
     queried matches that of the token used for authentication, which is
     required.
     """
-    auth_url = current_app.config['keystone_authtoken']['auth_url']
-    try:
-        auth_token = request.headers['X-Auth-Token']
-    except KeyError:
-        abort(403)
+    if 'X-Auth-Token' not in request.headers.keys():
+        raise ir_exception.MissingToken()
 
     # Query the identity service to get the token's audit ID, check to make
     # sure that it matches with the session id in the URL.
+    auth_url = current_app.config['keystone_authtoken']['auth_url']
+    auth_token = request.headers['X-Auth-Token']
     auth = token_endpoint.Token(endpoint=auth_url, token=auth_token)
     sess = session.Session(auth=auth)
-    try:
-        token_info = sess.get(auth_url + '/auth/tokens',
-                              headers={'X-Subject-Token': auth_token}).json()
-    except ks_exceptions.http.Unauthorized:
-        abort(403)
-
+    token_info = sess.get(auth_url + '/auth/tokens',
+                          headers={'X-Subject-Token': auth_token}).json()
     token_id = token_info['token']['audit_ids'][0]
     app_cred_id = token_info['token']['application_credential']['id']
 
     if token_id != sess_id:
-        raise exception.SessionNotFound(sess_id=sess_id)
+        raise ir_exception.SessionNotFound(sess_id=sess_id)
 
     return jsonify({
         '@odata.id': '/redfish/v1/SessionService/Sessions/%s' % token_id,
@@ -191,25 +181,21 @@ def end_session(sess_id):
     revoke the application credential; it revokes the auth token that was
     previously created using said credential.
     """
-    auth_url = current_app.config['keystone_authtoken']['auth_url']
-    try:
-        auth_token = request.headers['X-Auth-Token']
-    except KeyError:
-        abort(403)
+    if 'X-Auth-Token' not in request.headers.keys():
+        raise ir_exception.MissingToken()
 
     # Query the identity service to get the token's audit ID, check to make
     # sure that it matches with the session id in the URL.
+    auth_url = current_app.config['keystone_authtoken']['auth_url']
+    auth_token = request.headers['X-Auth-Token']
     auth = token_endpoint.Token(endpoint=auth_url, token=auth_token)
     sess = session.Session(auth=auth)
-    try:
-        token_info = sess.get(auth_url + '/auth/tokens',
-                              headers={'X-Subject-Token': auth_token}).json()
-    except ks_exceptions.http.Unauthorized:
-        abort(403)
-
+    token_info = sess.get(auth_url + '/auth/tokens',
+                          headers={'X-Subject-Token': auth_token}).json()
     token_id = token_info['token']['audit_ids'][0]
+
     if token_id != sess_id:
-        raise exception.SessionNotFound(sess_id=sess_id)
+        raise ir_exception.SessionNotFound(sess_id=sess_id)
 
     req = sess.delete(auth_url + '/auth/tokens',
                       headers={'X-Subject-Token': auth_token})

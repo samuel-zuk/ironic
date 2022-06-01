@@ -70,9 +70,8 @@ def setup_app(testing=False):
                                         app.config['public_routes'])
 
     with app.app_context():
-        ContextHooks.register()
-        RPCAPIHooks.register()
-        ErrorHooks.register()
+        for hook in (ContextHooks, RPCAPIHooks, ErrorHooks):
+            hook.register()
 
     return app.test_client() if testing else app.wsgi_app
 

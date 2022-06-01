@@ -52,7 +52,7 @@ class RedfishProxyTestCase(base.TestCase):
         :param is_json: if the data should be parsed and sent as json
         :param environ_overrides: a dict of WSGI environment overrides
         """
-        if method in ('POST', 'PUT', 'PATCH') and data and is_json:
+        if method in ('POST', 'PUT', 'PATCH') and data is not None and is_json:
             resp = self.client.open(path=path, method=method, headers=headers,
                                     environ_overrides=environ_overrides,
                                     json=data)

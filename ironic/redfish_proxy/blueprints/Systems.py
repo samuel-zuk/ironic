@@ -10,13 +10,11 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-from flask import abort
 from flask import Blueprint
 from flask import g
 from flask import jsonify
 from flask import make_response
 from flask import request
-from oslo_policy import policy as oslo_policy
 
 from ironic.common import exception
 from ironic.common import states as ir_states
@@ -35,10 +33,7 @@ def systems_collection_info():
     System objects. Requires the user to be authenticated.
     """
     # Ensure the user is allowed by policy to list baremetal nodes.
-    try:
-        project = proxy_utils.check_list_policy(g.context, object_type='node')
-    except (exception.HTTPForbidden, oslo_policy.InvalidScope):
-        abort(403)
+    project = proxy_utils.check_list_policy(g.context, object_type='node')
 
     # Query the DB to get the list of nodes to be returned.
     node_list = Node.list(g.context,
@@ -64,13 +59,8 @@ def system_info(node_uuid):
     UUID, name, description, and power state.
     """
     # Ensure the user is allowed by policy to get this node.
-    try:
-        node = proxy_utils.check_node_policy_and_retrieve(
-            g.context, 'baremetal:node:get', node_uuid)
-    except exception.HTTPForbidden:
-        abort(403)
-    except exception.NodeNotFound:
-        abort(404)
+    node = proxy_utils.check_node_policy_and_retrieve(
+        g.context, 'baremetal:node:get', node_uuid)
 
     node_dict = {
         '@odata.type': '#ComputerSystem.v1.0.0.ComputerSystem',
@@ -113,33 +103,29 @@ def set_system_power_state(node_uuid):
     the node in question. Expects a body containing a ResetType key with the
     value of the ResetType to be initiated.
     """
-    # Check if the POST request body is json; if not, attempt to jsonify it.
+    # Check if the POST request body is json.
     body = {}
     if request.is_json:
         body = request.get_json()
     else:
-        abort(400)
+        raise exception.RequestNotJSON()
 
     # Ensure the ResetType is specified and valid, get the corresponding
     # target Ironic power state to be sent with the RPC call.
-    try:
-        target_state = proxy_utils.redfish_reset_type_to_ironic_power_state(
-            body['ResetType'])
-    except (KeyError, ValueError):
-        abort(400)
+    if 'ResetType' not in body.keys():
+        raise exception.MissingRequestField(field='ResetType')
+    target_state = proxy_utils.redfish_reset_type_to_ironic_power_state(
+        body['ResetType'])
 
     # Ensure the user is allowed by policy to access this node.
-    try:
-        node = proxy_utils.check_node_policy_and_retrieve(
-            g.context, 'baremetal:node:set_power_state', node_uuid)
-    except exception.HTTPForbidden:
-        abort(403)
-    except exception.NodeNotFound:
-        abort(404)
+    node = proxy_utils.check_node_policy_and_retrieve(
+        g.context, 'baremetal:node:set_power_state', node_uuid)
 
     # If the node is cleaning, do not allow for it to be reset.
     if node.provision_state in (ir_states.CLEANWAIT, ir_states.CLEANING):
-        abort(400)
+        raise exception.InvalidStateRequested(action=target_state,
+                                              node=node.uuid,
+                                              state=node.provision_state)
 
     if node.power_state != target_state:
         # Make the RPC call.

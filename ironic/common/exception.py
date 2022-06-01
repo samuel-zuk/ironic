@@ -841,5 +841,17 @@ class SessionNotFound(NotFound):
     _msg_fmt = _("Session with id %(sess_id)s could not be found.")
 
 
-class MissingCredential(Invalid):
-    _msg_fmt = _('Required field "%(field_name)s" absent from request.')
+class MissingRequestField(MissingParameterValue):
+    _msg_fmt = _('Expected value for field(s) "%(field)s" in request body.')
+
+
+class MissingToken(MissingParameterValue):
+    _msg_fmt = _('Expected token in "X-Auth-Token" header field.')
+
+
+class RequestNotJSON(Invalid):
+    _msg_fmt = _('Expected request to be in JSON form.')
+
+
+class InvalidRedfishResetType(InvalidParameterValue):
+    _msg_fmt = _('%(rtype)s is not a valid Redfish ResetType.')

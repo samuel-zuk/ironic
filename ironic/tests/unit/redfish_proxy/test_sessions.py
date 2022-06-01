@@ -76,7 +76,7 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
         else:
             return self.fake_session.call_args.kwargs[kwarg]
 
-    def test_get_sesionservice_info(self):
+    def test_get_sessionservice_info(self):
         """Tests that requests for SessionService info resolve correctly."""
         resp = self.http_get('/redfish/v1/SessionService',
                              headers=self._auth_header())
@@ -184,7 +184,7 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
             self.mock_call_kwarg('headers', method='get')['X-Subject-Token'],
             FAKE_CREDS['TOKEN'])
 
-    def test_delete_current_sesison(self):
+    def test_delete_current_session(self):
         """Tests that requests to revoke token resolve, given valid token."""
         self.fake_session.get.return_value = self._mock_get_helper()
         self.fake_session.delete.return_value = utils.FakeResponse({}, 204)
@@ -222,6 +222,12 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
         self.assertNotEqual(auth_rcvd['secret'], FAKE_CREDS['APP_CRED_SECRET'])
         self.fake_session.get.assert_not_called()
 
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 403)
+        self.assertEqual(err['title'], 'Forbidden')
+        self.assertTrue(err['message'])
+
     def test_authentication_invalid_secret(self):
         """Tests that authentication fails given invalid app cred secret."""
         self.fake_session.get_auth_headers.side_effect = (
@@ -238,6 +244,12 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
         self.assertNotEqual(auth_rcvd['secret'], FAKE_CREDS['APP_CRED_SECRET'])
         self.fake_session.get.assert_not_called()
 
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 403)
+        self.assertEqual(err['title'], 'Forbidden')
+        self.assertTrue(err['message'])
+
     def test_authentication_no_auth(self):
         """Tests that authentication fails if no credentials are provided."""
         self.fake_session.get_auth_headers.return_value = self._auth_header()
@@ -249,24 +261,41 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
         self.fake_session.get_auth_headers.assert_not_called()
         self.fake_session.get.assert_not_called()
 
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 400)
+        self.assertEqual(err['title'], 'Bad Request')
+        self.assertEqual('Expected value for field(s) "UserName, Password" in '
+                         'request body.', err['message'])
+
     def test_authentication_malformed_data(self):
         """Tests that authentication fails if request body is malformed."""
-        # checks missing password, missing username, intentional typo
+        # checks missing pass, missing username, intentional typo, null value
         malformed_data = ({'UserName': FAKE_CREDS['APP_CRED_ID']},
                           {'Password': FAKE_CREDS['APP_CRED_SECRET']},
                           {'UserName': FAKE_CREDS['APP_CRED_ID'],
-                           'Pasword': FAKE_CREDS['APP_CRED_SECRET']})
+                           'Pasword': FAKE_CREDS['APP_CRED_SECRET']},
+                          {'Username': None,
+                           'Password': FAKE_CREDS['APP_CRED_SECRET']})
+        missing_fields = ('Password', 'UserName', 'Password', 'UserName')
         self.fake_session.get_auth_headers.return_value = self._auth_header()
         self.fake_session.get.return_value = self._mock_get_helper()
-        for auth in malformed_data:
+        for i in range(0, len(malformed_data)):
             resp = self.http_post('/redfish/v1/SessionService/Sessions',
-                                  data=auth)
+                                  data=malformed_data[i])
 
             self.assertEqual(resp.status_code, 400)
             self.fake_session.assert_not_called()
             self.fake_session.get_auth_headers.assert_not_called()
             self.fake_session.get.assert_not_called()
             self.fake_session.reset_mock()
+
+            self.assertIn('error', resp.get_json().keys())
+            err = resp.get_json()['error']
+            self.assertEqual(err['code'], 400)
+            self.assertEqual(err['title'], 'Bad Request')
+            self.assertEqual('Expected value for field(s) "%s" in request '
+                             'body.' % missing_fields[i], err['message'])
 
     def test_authentication_bad_mimetype(self):
         """Tests that authentication fails if request is not JSON."""
@@ -281,15 +310,31 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
         self.fake_session.get_auth_headers.assert_not_called()
         self.fake_session.get.assert_not_called()
 
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 400)
+        self.assertEqual(err['title'], 'Bad Request')
+        self.assertEqual('Expected request to be in JSON form.',
+                         err['message'])
+
     def test_get_invalid_session(self):
         """Tests that trying to get a nonexistent session fails."""
         self.fake_session.get.return_value = self._mock_get_helper()
-        resp = self.http_get('/redfish/v1/SessionService/Sessions/bingus',
+        invalid_session_id = 'bingus'
+        resp = self.http_get('/redfish/v1/SessionService/Sessions/%s' %
+                             invalid_session_id,
                              headers=self._auth_header())
 
         self.assertEqual(resp.status_code, 404)
         self.fake_session.assert_called()
         self.fake_session.get.assert_called()
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 404)
+        self.assertEqual(err['title'], 'Not Found')
+        self.assertEqual('Session with id %s could not be found.' %
+                         invalid_session_id, err['message'])
 
     def test_get_session_invalid_token(self):
         """Tests that trying to get a session fails with invalid token."""
@@ -304,6 +349,12 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
             self.fake_session.assert_called()
             self.fake_session.get.assert_called()
 
+            self.assertIn('error', resp.get_json().keys())
+            err = resp.get_json()['error']
+            self.assertEqual(err['code'], 403)
+            self.assertEqual(err['title'], 'Forbidden')
+            self.assertTrue(err['message'])
+
     def test_get_session_no_token(self):
         """Tests that trying to get a session fails without a token."""
         # check with both valid and invalid session identifiers
@@ -313,9 +364,16 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
                                  session_id,
                                  headers={})
 
-            self.assertEqual(resp.status_code, 403)
+            self.assertEqual(resp.status_code, 401)
             self.fake_session.assert_not_called()
             self.fake_session.get.assert_not_called()
+
+            self.assertIn('error', resp.get_json().keys())
+            err = resp.get_json()['error']
+            self.assertEqual(err['code'], 401)
+            self.assertEqual(err['title'], 'Unauthorized')
+            self.assertEqual('Expected token in "X-Auth-Token" header field.',
+                             err['message'])
 
     def test_get_all_sessions_invalid_auth(self):
         """Tests that trying to get session list fails with invalid creds."""
@@ -327,27 +385,49 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
         self.fake_session.assert_called()
         self.fake_session.get.assert_called()
 
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 403)
+        self.assertEqual(err['title'], 'Forbidden')
+        self.assertTrue(err['message'])
+
     def test_get_all_sessions_no_auth(self):
         """Tests that trying to get session list fails without a token."""
         self.fake_session.get.return_value = self._mock_get_helper()
         resp = self.http_get('/redfish/v1/SessionService/Sessions',
                              headers={})
 
-        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.status_code, 401)
         self.fake_session.assert_not_called()
         self.fake_session.get.assert_not_called()
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 401)
+        self.assertEqual(err['title'], 'Unauthorized')
+        self.assertEqual('Expected token in "X-Auth-Token" header field.',
+                         err['message'])
 
     def test_delete_invalid_session(self):
         """Tests that trying to delete a nonexistent session fails."""
         self.fake_session.get.return_value = self._mock_get_helper()
         self.fake_session.delete.return_value = utils.FakeResponse({}, 204)
-        resp = self.http_delete('/redfish/v1/SessionService/Sessions/bingus',
+        invalid_session_id = 'bingus'
+        resp = self.http_delete('/redfish/v1/SessionService/Sessions/%s' %
+                                invalid_session_id,
                                 headers=self._auth_header())
 
         self.assertEqual(resp.status_code, 404)
         self.fake_session.assert_called()
         self.fake_session.get.assert_called()
         self.fake_session.delete.assert_not_called()
+
+        self.assertIn('error', resp.get_json().keys())
+        err = resp.get_json()['error']
+        self.assertEqual(err['code'], 404)
+        self.assertEqual(err['title'], 'Not Found')
+        self.assertEqual('Session with id %s could not be found.' %
+                         invalid_session_id, err['message'])
 
     def test_delete_session_invalid_token(self):
         """Tests that trying to delete a session fails with invalid token."""
@@ -363,6 +443,12 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
             self.fake_session.get.assert_called()
             self.fake_session.delete.assert_not_called()
 
+            self.assertIn('error', resp.get_json().keys())
+            err = resp.get_json()['error']
+            self.assertEqual(err['code'], 403)
+            self.assertEqual(err['title'], 'Forbidden')
+            self.assertTrue(err['message'])
+
     def test_delete_session_no_token(self):
         """Tests that trying to delete a session fails without a token."""
         self.fake_session.get.return_value = self._mock_get_helper()
@@ -373,10 +459,17 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
                                     session_id,
                                     headers={})
 
-            self.assertEqual(resp.status_code, 403)
+            self.assertEqual(resp.status_code, 401)
             self.fake_session.assert_not_called()
             self.fake_session.get.assert_not_called()
             self.fake_session.delete.assert_not_called()
+
+            self.assertIn('error', resp.get_json().keys())
+            err = resp.get_json()['error']
+            self.assertEqual(err['code'], 401)
+            self.assertEqual(err['title'], 'Unauthorized')
+            self.assertEqual('Expected token in "X-Auth-Token" header field.',
+                             err['message'])
 
 
 class RedfishProxySessionDisabledTests(base.RedfishProxyTestCase):
