@@ -12,7 +12,7 @@
 
 from unittest import mock
 
-import keystoneauth1.exceptions as ks_exceptions
+import keystoneauth1.exceptions as ks_exception
 from oslo_config import cfg
 
 from ironic.conf import CONF
@@ -210,7 +210,7 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
     def test_authentication_invalid_creds(self):
         """Tests that authentication fails given invalid credentials."""
         self.fake_session.get_auth_headers.side_effect = (
-            ks_exceptions.http.NotFound())
+            ks_exception.http.NotFound())
         self.fake_session.get.return_value = self._mock_get_helper()
         resp = self.http_post('/redfish/v1/SessionService/Sessions',
                               data={'UserName': 'foo', 'Password': 'bar'})
@@ -231,7 +231,7 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
     def test_authentication_invalid_secret(self):
         """Tests that authentication fails given invalid app cred secret."""
         self.fake_session.get_auth_headers.side_effect = (
-            ks_exceptions.http.Unauthorized())
+            ks_exception.http.Unauthorized())
         self.fake_session.get.return_value = self._mock_get_helper()
         resp = self.http_post('/redfish/v1/SessionService/Sessions',
                               data={'UserName': FAKE_CREDS['APP_CRED_ID'],
@@ -339,7 +339,7 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
     def test_get_session_invalid_token(self):
         """Tests that trying to get a session fails with invalid token."""
         # check with both valid and invalid session identifiers
-        self.fake_session.get.side_effect = ks_exceptions.http.Unauthorized()
+        self.fake_session.get.side_effect = ks_exception.http.Unauthorized()
         for session_id in FAKE_CREDS['TOKEN_ID'], 'bingus':
             resp = self.http_get('/redfish/v1/SessionService/Sessions/%s' %
                                  session_id,
@@ -377,7 +377,7 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
 
     def test_get_all_sessions_invalid_auth(self):
         """Tests that trying to get session list fails with invalid creds."""
-        self.fake_session.get.side_effect = ks_exceptions.http.Unauthorized()
+        self.fake_session.get.side_effect = ks_exception.http.Unauthorized()
         resp = self.http_get('/redfish/v1/SessionService/Sessions',
                              headers=self._auth_header('foobar'))
 
@@ -431,7 +431,7 @@ class RedfishProxySessionTests(base.RedfishProxyTestCase):
 
     def test_delete_session_invalid_token(self):
         """Tests that trying to delete a session fails with invalid token."""
-        self.fake_session.get.side_effect = ks_exceptions.http.Unauthorized()
+        self.fake_session.get.side_effect = ks_exception.http.Unauthorized()
         # check with both valid and invalid session identifiers
         for session_id in FAKE_CREDS['TOKEN_ID'], 'bingus':
             resp = self.http_delete('/redfish/v1/SessionService/Sessions/%s' %

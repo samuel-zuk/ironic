@@ -15,7 +15,7 @@ from oslo_utils import uuidutils
 
 from ironic.common import exception
 from ironic.common import policy
-from ironic.common import states as ir_states
+import ironic.common.states as ir_states
 from ironic import objects
 
 
@@ -23,7 +23,8 @@ IRONIC_REDFISH_POWER_STATE_MAP = {
     ir_states.POWER_ON: 'On',
     ir_states.POWER_OFF: 'Off',
     ir_states.REBOOT: 'Reset',
-    ir_states.SOFT_REBOOT: 'Reset'
+    ir_states.SOFT_REBOOT: 'Reset',
+    None: 'Unknown'
 }
 
 
@@ -46,11 +47,9 @@ def ironic_to_redfish_power_state(node_power_state):
              node power state.
     :return: The Redfish representation of node_power_state.
     """
-    if node_power_state is None:
-        return 'Unknown'
     try:
         return IRONIC_REDFISH_POWER_STATE_MAP[node_power_state]
-    except KeyError:
+    except (KeyError, TypeError):
         raise ValueError('Invalid node power state "%s"' % node_power_state)
 
 
@@ -64,7 +63,7 @@ def redfish_reset_type_to_ironic_power_state(target_state):
     """
     try:
         return REDFISH_IRONIC_TARGET_STATE_MAP[target_state]
-    except KeyError:
+    except (KeyError, TypeError):
         raise exception.InvalidRedfishResetType(rtype=target_state)
 
 
@@ -79,6 +78,7 @@ def check_list_policy(context, object_type, owner=None):
     :param: owner: owner filter for list query, if any
 
     :raises: HTTPForbidden if the policy forbids access.
+    :raises: InvalidScope if the policy scope is invalid.
     :return: owner that should be used for list query, if needed
     """
     cdict = context.to_policy_values()
@@ -146,18 +146,7 @@ def check_node_policy_and_retrieve(context, policy_name, node_ident,
     :return: RPC node identified by node_ident
     """
     conceal_node = False
-    try:
-        rpc_node = get_rpc_node_by_uuid(context, node_ident)
-    except exception.NodeNotFound:
-        # NOTE(s_zuk): The _get_with_suffix() helper function called by the
-        # Pecan version of this function checks the value of 'HAS_JSON_SUFFIX'
-        # within the request environment. Here, we will instead leave it up to
-        # the caller of this function to set the value of with_suffix to avoid
-        # making any assumptions about the environment.
-        if with_suffix:
-            rpc_node = get_rpc_node_by_uuid(context, node_ident + '.json')
-        else:
-            raise
+    rpc_node = get_rpc_node_by_uuid(context, node_ident)
 
     # Project scoped users should get a 404 where as system scoped users should
     # get a 403.
@@ -194,10 +183,12 @@ def get_rpc_node_by_uuid(context, node_ident):
     """
     # Check to see if the node_ident is a valid UUID.  If it is, treat it
     # as a UUID.
-    if uuidutils.is_uuid_like(node_ident):
-        return objects.Node.get_by_uuid(context, node_ident)
-    else:
+    if not uuidutils.is_uuid_like(node_ident):
         raise exception.InvalidUUID(uuid=node_ident)
+
+    node = objects.Node.get_by_uuid(context, node_ident)
+    if node:
+        return node
 
     # Ensure we raise the same exception as we did for the Juno release.
     raise exception.NodeNotFound(node=node_ident)
