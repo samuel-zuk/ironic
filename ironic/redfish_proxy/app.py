@@ -32,7 +32,7 @@ def setup_app(testing=False):
                            'disabled and must be enabled in ironic.conf.')
     app = Flask(__name__)
     app.config.update(CONF)
-    # (e.g. requests to /endpoint/ and /endpoint should resolve identitcally)
+    # (e.g. requests to /endpoint/ and /endpoint should resolve identically)
     app.url_map.strict_slashes = False
 
     app.register_blueprint(root)

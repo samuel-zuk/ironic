@@ -61,9 +61,7 @@ class TestWSGIService(base.TestCase):
         self.config(api_workers=-2, group='api')
         self.assertRaises(exception.ConfigInvalid,
                           wsgi_service.WSGIService,
-                          'ironic_api',
-                          app,
-                          'api')
+                          'ironic_api', app, 'api')
         self.assertFalse(mock_server.called)
 
     @mock.patch.object(wsgi_service.wsgi, 'Server', autospec=True)

@@ -129,8 +129,7 @@ def check_owner_policy(context, object_type, policy_name, owner, lessee=None,
             raise
 
 
-def check_node_policy_and_retrieve(context, policy_name, node_ident,
-                                   with_suffix=False):
+def check_node_policy_and_retrieve(context, policy_name, node_ident):
     """Check if the specified policy authorizes this request on a node.
 
     NOTE(s_zuk): Framework-agnostic rewrite of check_node_policy_and_retrieve()
@@ -139,7 +138,6 @@ def check_node_policy_and_retrieve(context, policy_name, node_ident,
     :param: context: the RequestContext object associated with this DB query
     :param: policy_name: Name of the policy to check.
     :param: node_ident: the UUID of a node.
-    :param: with_suffix: whether the RPC node should include the suffix
 
     :raises: HTTPForbidden if the policy forbids access.
     :raises: NodeNotFound if the node is not found.
