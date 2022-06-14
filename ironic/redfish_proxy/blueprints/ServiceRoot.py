@@ -10,8 +10,6 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
-import xml.etree.ElementTree as ET
-
 from flask import Blueprint
 from flask import current_app
 from flask import jsonify
@@ -102,22 +100,13 @@ def metadata_document():
     Modeled after the sample service document provided in section 6.3 of:
     https://www.dmtf.org/sites/default/files/standards/documents/DSP2052_1.0.0.pdf
     """
-    with open('ironic/redfish_proxy/schema.xml', 'r') as doc_file:
-        doc_str = doc_file.read()
+    if current_app.config['auth_strategy'] == 'keystone':
+        doc_file = 'ironic/redfish_proxy/schema/metadata_doc_keystone.xml'
+    else:
+        doc_file = 'ironic/redfish_proxy/schema/metadata_doc_no_keystone.xml'
 
-    # Remove references to Sessions if not using Keystone
-    if current_app.config['auth_strategy'] != 'keystone':
-        xml_root = ET.fromstring(doc_str)
-        ns = {'edmx': 'http://docs.oasis-open.org/odata/ns/edmx'}
-        for ref in xml_root.findall('./edmx:Reference', ns):
-            if ref.attrib['Uri'].find('Session') != -1:
-                xml_root.remove(ref)
-        ET.register_namespace('edmx',
-                              'http://docs.oasis-open.org/odata/ns/edmx')
-        ET.register_namespace('edm',
-                              'http://docs.oasis-open.org/odata/ns/edm')
-        doc_str = ET.tostring(xml_root)
-
+    with open(doc_file, 'r') as f:
+        doc_str = f.read()
     response = make_response(doc_str, 200)
     response.headers['Content-Type'] = 'application/xml'
     return response
